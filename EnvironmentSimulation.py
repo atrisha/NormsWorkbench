@@ -229,8 +229,8 @@ class Simulation:
         
         cmap = cm.coolwarm
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=matplotlib.colors.Normalize(vmin=0, vmax=1))
-        #all_d_samples = np.linspace(0,0.95,10)
-        all_d_samples = [0]
+        all_d_samples = np.linspace(0,0.95,20)
+        #all_d_samples = [0,0.25,0.5,0.75,0.95]
         colors = cm.coolwarm(np.linspace(0,1,len(all_d_samples)))
         results = dict()
         for d_idx,d_sample in enumerate(all_d_samples):
@@ -244,8 +244,8 @@ class Simulation:
                 time_period_results = {0:1}
                 
                 for time_period in np.arange(1,100,1):
-                    show_bel_id = np.random.choice(list(player_list.keys()))
-                    utils.plot_beta(player_list[show_bel_id].belief_alpha, player_list[show_bel_id].belief_beta)
+                    #show_bel_id = np.random.choice(list(player_list.keys()))
+                    #utils.plot_beta(player_list[show_bel_id].belief_alpha, player_list[show_bel_id].belief_beta)
                     #print(time_period,'players:'+str(len(player_list)),'utils:'+str(np.mean([x.utility for x in player_list.values()]))+'-'+str(np.std([x.utility for x in player_list.values()])))
                     which_interaction_is_important = np.random.choice(np.arange(int(1/(1-constants.d))))
                     for interaction_idx in np.arange(int(1/(1-constants.d))):
@@ -343,17 +343,19 @@ class Simulation:
         plt.show()
 
 s = Simulation()
-#constants.alpha = 30
-#constants.beta = 20
+constants.alpha = 30
+constants.beta = 20
 '''baseline (0.02)'''
-#constants.c = 0.09
+constants.c = 0.09
 '''baseline (0.01)'''
 #constants.c = 0.07
 '''baseline (0.005)'''
 #constants.c = .035
 '''baseline (0.002)'''
 #constants.c = .0138
+'''
 constants.c = 0.0035
 constants.alpha = 1.2
 constants.beta = 0.8
+'''
 s.run_sim()
