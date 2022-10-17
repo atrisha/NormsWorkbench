@@ -49,3 +49,7 @@ def calc_update_util(util_val,theta,d,c):
         disc_factor_multiplier = disc_factor_multiplier*scaled_disc
     return sum
 
+cen_true_distr = None
+cen_belief = None
+minority_op_mode = None
+
