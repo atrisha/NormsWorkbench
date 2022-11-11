@@ -22,6 +22,8 @@ c = None
 punisher_prop = 0.6
 
 players_per_group = 100
+
+num_players = 100
 '''
 def get_beta_discrete(inp_x,a,b):
     beta_discrete = {prop:beta.pdf(x=inp_x,a,b)/sum(beta.pdf(x=np.arange(0.1,1.1,.1),a,b)) for prop in np.arange(0.1,1.1,.1)}
@@ -52,4 +54,10 @@ def calc_update_util(util_val,theta,d,c):
 cen_true_distr = None
 cen_belief = None
 minority_op_mode = None
+op_mode = None
+payoff_tol = None
+risk_tol = None
+
+def get_maj_opinion():
+    return 'A' if cen_true_distr[0]/(cen_true_distr[0]+cen_true_distr[1]) >= 0.5 else 'D'
 

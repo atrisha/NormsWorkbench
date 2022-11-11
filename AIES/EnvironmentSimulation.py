@@ -6,7 +6,7 @@ Created on 19 Aug 2022
 import matplotlib
 from matplotlib import cm
 import matplotlib.pyplot as plt
-from norm_objects import *
+from AIES.norm_objects import *
 import constants
 import numpy as np
 from scipy.interpolate import interp1d

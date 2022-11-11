@@ -10,6 +10,10 @@ from lp_utils import solve_lp_multivar
 
 class CorrelatedEquilibria:
     
+    def __init__(self,additional_constraints_callback=None,callback_args = None):
+        self.additional_constraints_callback = additional_constraints_callback
+        self.callback_args = callback_args
+    
     def solve(self,payoff_dict,players):
         num_players = len(list(payoff_dict.keys())[0])
         player_actions = [list(set([k[i] for k in payoff_dict.keys()])) for i in np.arange(num_players)]
@@ -58,6 +62,8 @@ class CorrelatedEquilibria:
             ''' Utilitarian social welfare will just add the utilities '''
             val = sum(high_bounds_transformed_payoffs[strat_profile])
             obj_vals.append(val)
+        if self.additional_constraints_callback is not None:
+            high_constr_list = self.additional_constraints_callback((high_constr_list,self.callback_args))
         if high_constr_list is not None:
             solns = solve_lp_multivar(all_vars,obj_vals,high_constr_list) 
             solns_dict['high'] = solns

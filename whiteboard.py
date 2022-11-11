@@ -6,7 +6,7 @@ Created on 25 Sept 2022
 
 import numpy as np
 import matplotlib.pyplot as plt
-
+from scipy.stats import beta
 from z3 import *
 
 
@@ -104,8 +104,56 @@ def z3_test():
     print(s.check())
     print(s.model())
     
-z3_test()
+#z3_test()
+
+def plot_payoff_based_selection_prob():
+    x = np.linspace(0,1,100)
+    fy =  lambda x : 2*x if x <=0.5 else 2-2*x 
+    plt.plot(x,[fy(_x) for _x in x])
+    plt.xlabel('op(A)')
+    plt.ylabel('probability of payoff based selection')
+    plt.show()
+
+def plot_exp():
+    x = np.linspace(0.5,1,100)
+    #fy =  lambda x : np.exp(1)*np.exp(-x)/(np.exp(1)-1)
+    fy =  lambda x : 1-x
+    plt.plot(x,[fy(_x) for _x in x])
+    plt.show()
     
+def plot_line():
+    a,b = 2,2
+    x = np.linspace(beta.ppf(0.01, a, b),beta.ppf(0.99, a, b), 100)
+    plt.figure(figsize=(7,7))
+    plt.xlim(0, 1)
+    y = beta.pdf(x, a, b)
+    plt.plot(x, [_e/max(y) for _e in y], linestyle='-')
+    plt.xlabel('op(A)', fontsize='15')
+    plt.ylabel('Cost of context mismatch', fontsize='15')
+    plt.show()
+
+#plot_line()            
+ 
+def plot_PN_matrix():
+    fig, ax = plt.subplots(1,4)
+
+    P_size, N_size = 20, 20
+    app_prob_lik = lambda x : 0.9-0.047*x
+    PN_matrix = np.empty(shape=(P_size, N_size))
+    for _p in np.arange(PN_matrix.shape[0]):
+        _n_entry = np.random.choice([0,1],N_size,True,[1-app_prob_lik(_p),app_prob_lik(_p)])
+        PN_matrix[_p,:] = _n_entry
+    app_prob_lik = lambda x : 0.5
+    DB_matrix = np.empty(shape=(P_size, N_size))
+    for _p in np.arange(DB_matrix.shape[0]):
+        _n_entry = np.random.choice([0,1],N_size,True,[1-app_prob_lik(_p),app_prob_lik(_p)])
+        DB_matrix[_p,:] = _n_entry
+    ax[0].matshow(PN_matrix, cmap='bwr_r')
+    ax[2].matshow(DB_matrix, cmap='bwr_r')
+    ax[1].matshow(np.sum(PN_matrix,axis=1).reshape(PN_matrix.shape[0],1), cmap='bwr_r')
+    ax[3].matshow(np.sum(DB_matrix,axis=1).reshape(DB_matrix.shape[0],1), cmap='bwr_r')
     
-            
-     
+    plt.show()
+
+
+plot_PN_matrix()
