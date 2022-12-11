@@ -7,8 +7,13 @@ Created on 25 Sept 2022
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import beta
-from z3 import *
-
+#from z3 import *
+from scipy.stats import entropy
+from scipy.interpolate import RectBivariateSpline
+from scipy.special import expit
+import rpy2.robjects as robjects
+import rpy2.robjects.numpy2ri
+from rpy2.robjects.packages import importr
 
 
 def show_convergence():
@@ -155,5 +160,28 @@ def plot_PN_matrix():
     
     plt.show()
 
+'''
+#N_dict = {'n1':0.3,'n2':0.2,'n3':0.1,'n4':0.4}
+N_dict = [0.3,0.2,0.1,0.4]
+prob_app = [1,1,1,1]
+prob_dis = [1-x for x in prob_app]
+binom_param =np.sum([N_dict[i] for i in np.arange(len(N_dict)) if prob_app[i] == 1])
+#prob_app = [0.1,0.1,0.1,0.1]
 
-plot_PN_matrix()
+cost_entropy = entropy([binom_param, 1-binom_param], base=2)
+
+print(cost_entropy)
+'''
+def plot_multivariate_gaussian(mean,corr):
+    cov_val =  corr * np.sqrt(0.07) * np.sqrt(0.01)
+    cov = np.array([[.07, cov_val], [cov_val, .01]])
+    pts = np.random.multivariate_normal([0, 0], cov, size=800)
+    pts = expit(pts)
+    plt.plot(pts[:, 0], pts[:, 1], '.', alpha=0.5)
+    plt.grid()
+    plt.show()
+
+
+
+ 
+    

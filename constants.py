@@ -59,5 +59,5 @@ payoff_tol = None
 risk_tol = None
 
 def get_maj_opinion():
-    return 'A' if cen_true_distr[0]/(cen_true_distr[0]+cen_true_distr[1]) >= 0.5 else 'D'
+    return 'A' if sum(cen_true_distr[2:])/sum(cen_true_distr) >= 0.5 else 'D'
 
