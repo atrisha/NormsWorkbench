@@ -183,11 +183,23 @@ def correlation_constraints(ref_cor_index,opinion_param_samples):
     corr_sums = np.sum(corr_matrix_upp_bound,axis=0)
     return corr_matrix_upp_bound
     
-def plot_gaussian(mu,variance):
+def plot_gaussian(mu,variance,ax=None,vert_line_at = None):
     sigma = math.sqrt(variance)
     x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
-    plt.plot(x, stats.norm.pdf(x, mu, sigma))
-    plt.show()
+    if ax is None:
+        plt.fill(x, stats.norm.pdf(x, mu, sigma))
+    else:
+        ax.fill(x, stats.norm.pdf(x, mu, sigma))
+    if vert_line_at is not None:
+        y_lim = plt.gca().get_ylim()
+        if ax is None:
+            plt.plot([vert_line_at]*2,[0,y_lim[-1]],'--')
+        else:
+            ax.plot([vert_line_at]*2,[0,y_lim[-1]],'--')
+    #plt.show()
+
+def list_to_str(l):
+    return [str(x) for x in l]
 
 def generate_samples(op_marginals,ref_cor_index):
     success = False
@@ -247,7 +259,6 @@ def generate_samples(op_marginals,ref_cor_index):
         except Exception:
             print('ran with',corr_mat,opinion_param_samples)
             success = False
-    marginals = np.sum(output,axis=0)/100
     return output,corr_mat,mi_matrix
 
 def generate_corr_mat_grid(op_marginals,ref_cor_index):

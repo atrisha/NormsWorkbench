@@ -16,6 +16,7 @@ from conda.common._logic import TRUE
 import csv
 from pathlib import Path
 from scipy.special import softmax
+import re
 
 NUM_ITERS = 10
 
@@ -79,8 +80,13 @@ class parallel_env(ParallelEnv):
             self.norm_contexts_distr = {'n1':0.4,'n2':0.2,'n3':0.3,'n4':0.1} 
         #self.norm_contexts_distr = {k:v/np.sum(list(self.norm_contexts_distr.values())) for k,v in self.norm_contexts_distr.items()}
         ''' Sample the player opinions based on their private contexts sampled from the context distribution '''
+        try_ct = 0
         if not hasattr(self, 'players_private_contexts'):
             players_private_contexts = np.random.choice(a=list(self.norm_contexts_distr.keys()),size=self.num_players,p=list(self.norm_contexts_distr.values()))
+            while(set(players_private_contexts) != set(self.norm_context_list)):
+                try_ct+=1
+                print('trying...',try_ct)
+                players_private_contexts = np.random.choice(a=list(self.norm_contexts_distr.keys()),size=self.num_players,p=list(self.norm_contexts_distr.values()))
             self.players_private_contexts = players_private_contexts
         players_private_contexts  = self.players_private_contexts
         for idx,op in enumerate(players_private_contexts): self.possible_agents[idx].norm_context = players_private_contexts[idx]
@@ -98,8 +104,6 @@ class parallel_env(ParallelEnv):
             
                 
         opinions = self.opinions
-        
-        self.opinion_marginals = np.sum(opinions,axis=0)/100
         
         self.opinion_marginals = dict()
         for n_idx,norm_context in enumerate(self.norm_context_list):
@@ -146,55 +150,70 @@ class parallel_env(ParallelEnv):
             n_context_appr_beliefs = {norm_context:None for n_idx,norm_context in enumerate(self.norm_context_list)}
             for n_context in n_context_appr_beliefs.keys():
                 pl_by_norm_contexts = [pl for pl in self.possible_agents if pl.norm_context==n_context]
-                appr_mean = np.mean([pl.belief[pl.norm_context] for pl in pl_by_norm_contexts])
+                appr_list,true_appr_list,act_distort_list = [],[],[]
+                for pl in pl_by_norm_contexts:
+                    apr_from_bel = pl.belief[pl.norm_context]
+                    appr_list.append(apr_from_bel)
+                    appr_true = np.sum([self.norm_contexts_distr[_n]*self.opinion_marginals[_nidx] for _nidx,_n in enumerate(self.norm_context_list)])
+                    true_appr_list.append(appr_true)
+                    binary_op_from_bel = pl.get_act_for_apr_theta(apr_from_bel)
+                    binary_op_from_true_apr = pl.get_act_for_apr_theta(appr_true)
+                    act_distort_list.append(binary_op_from_bel-binary_op_from_true_apr)
+                appr_distortion_mean = np.mean(np.array(appr_list)-np.array(true_appr_list))
                 payoff_mean = np.mean([pl.total_reward for pl in pl_by_norm_contexts])
                 participation_mean = np.mean([pl.total_participation for pl in pl_by_norm_contexts])
-                n_context_appr_beliefs[n_context] = (appr_mean,payoff_mean,participation_mean)
+                n_context_appr_beliefs[n_context] = (appr_distortion_mean,payoff_mean,participation_mean,act_distort_list)
                 
-            belief_distort_map = {_n:n_context_appr_beliefs[_n][0]-self.opinion_marginals[_nidx] for _nidx,_n in enumerate(self.norm_context_list)}
+            belief_distort_map = {_n:n_context_appr_beliefs[_n][0] for _nidx,_n in enumerate(self.norm_context_list)}
             payoff_map = {_n:n_context_appr_beliefs[_n][1] for _n in self.norm_context_list}
+            action_distortion_map = {_n:n_context_appr_beliefs[_n][3] for _nidx,_n in enumerate(self.norm_context_list)}
+            
         elif env.run_type in ['community-ref']:
             n_context_appr_beliefs = {norm_context:None for n_idx,norm_context in enumerate(self.norm_context_list)}
             for n_context in n_context_appr_beliefs.keys():
                 pl_by_norm_contexts = [pl for pl in self.possible_agents if pl.norm_context==n_context]
-                appr_list,true_appr_list = [],[]
+                appr_list,true_appr_list,act_distort_list = [],[],[]
                 for pl in pl_by_norm_contexts:
                     ''' Use the norm_prop that the player holds to calculate the expected belief '''
-                    appr_list.append(np.sum([pl.norm_prop[k]*pl.belief[k] for k in pl.belief.keys()]))
-                    true_appr_list.append(np.sum([self.norm_contexts_distr[_n]*self.opinion_marginals[_nidx] for _nidx,_n in enumerate(self.norm_context_list)]))
+                    apr_from_bel = np.sum([pl.norm_prop[k]*pl.belief[k] for k in pl.belief.keys()])
+                    appr_list.append(apr_from_bel)
+                    appr_true = np.sum([self.norm_contexts_distr[_n]*self.opinion_marginals[_nidx] for _nidx,_n in enumerate(self.norm_context_list)])
+                    true_appr_list.append(appr_true)
+                    binary_op_from_bel = pl.get_act_for_apr_theta(apr_from_bel)
+                    binary_op_from_true_apr = pl.get_act_for_apr_theta(appr_true)
+                    act_distort_list.append(binary_op_from_bel-binary_op_from_true_apr)
                 appr_distortion_mean = np.mean(np.array(appr_list)-np.array(true_appr_list))
                 payoff_mean = np.mean([pl.total_reward for pl in pl_by_norm_contexts])
                 participation_mean = np.mean([pl.total_participation for pl in pl_by_norm_contexts])
-                n_context_appr_beliefs[n_context] = (appr_distortion_mean,payoff_mean,participation_mean)
+                n_context_appr_beliefs[n_context] = (appr_distortion_mean,payoff_mean,participation_mean,act_distort_list)
                 
             belief_distort_map = {_n:n_context_appr_beliefs[_n][0] for _nidx,_n in enumerate(self.norm_context_list)}
             payoff_map = {_n:n_context_appr_beliefs[_n][1] for _n in self.norm_context_list}
+            action_distortion_map = {_n:n_context_appr_beliefs[_n][3] for _nidx,_n in enumerate(self.norm_context_list)}
+            
         else:
             ''' This is moderator ref branch '''
             n_context_appr_beliefs = {norm_context:None for n_idx,norm_context in enumerate(self.norm_context_list)}
             for n_context in n_context_appr_beliefs.keys():
                 pl_by_norm_contexts = [pl for pl in self.possible_agents if pl.norm_context==n_context]
-                appr_list,true_appr_list = [],[]
+                appr_list,true_appr_list,act_distort_list = [],[],[]
                 for pl in pl_by_norm_contexts:
-                    appr_list.append(np.sum([pl.norm_prop[k]*pl.belief[k] for k in pl.belief.keys()]))
-                    true_appr_list.append(np.sum([self.norm_contexts_distr[_n]*self.opinion_marginals[_nidx] for _nidx,_n in enumerate(self.norm_context_list)]))
+                    apr_from_bel = np.sum([pl.norm_prop[k]*pl.belief[k] for k in pl.belief.keys()])
+                    appr_list.append(apr_from_bel)
+                    appr_true = np.sum([self.norm_contexts_distr[_n]*self.opinion_marginals[_nidx] for _nidx,_n in enumerate(self.norm_context_list)])
+                    true_appr_list.append(appr_true)
+                    binary_op_from_bel = pl.get_act_for_apr_theta(apr_from_bel)
+                    binary_op_from_true_apr = pl.get_act_for_apr_theta(appr_true)
+                    act_distort_list.append(binary_op_from_bel-binary_op_from_true_apr)
                 appr_distortion_mean = np.mean(np.array(appr_list)-np.array(true_appr_list)) if len(appr_list) > 0 else None
                 rewards_list = [pl.total_reward for pl in pl_by_norm_contexts]
                 payoff_mean = np.mean(rewards_list)
                 participation_mean = np.mean([pl.total_participation for pl in pl_by_norm_contexts])
-                n_context_appr_beliefs[n_context] = (appr_distortion_mean,payoff_mean,participation_mean)
+                n_context_appr_beliefs[n_context] = (appr_distortion_mean,payoff_mean,participation_mean,act_distort_list)
             payoff_map = {_n:n_context_appr_beliefs[_n][1] for _n in self.norm_context_list}
             belief_distort_map = {_n:n_context_appr_beliefs[_n][0] for _nidx,_n in enumerate(self.norm_context_list)}
+            action_distortion_map = {_n:n_context_appr_beliefs[_n][3] for _nidx,_n in enumerate(self.norm_context_list)}
             
-        '''
-        obs = self.observations[0]
-        obs_appr_mean,obs_appr_var = obs[0,0], obs[0,1]
-        #self.belief = self.belief + np.rint(obs*10)
-        mom_alpha_est = lambda u,v : u * (((u*(1-u))/v) - 1)
-        mom_beta_est = lambda u,v : (1-u) * (((u*(1-u))/v) - 1)
-        mom_cond = True if obs_appr_var < obs_appr_mean*(1-obs_appr_mean) else False
-        belief = np.array([mom_alpha_est(obs_appr_mean,obs_appr_var), mom_beta_est(obs_appr_mean,obs_appr_var)]).reshape((1,2))
-        '''
         if not self.no_print:
             print('-------------------------------------------------------------------------------------------------------')
             print('iter:',msg,'corr_mat sums:',np.sum(self.corr_mat,axis=0))
@@ -202,10 +221,11 @@ class parallel_env(ParallelEnv):
             print('iter:',msg,'Mean distort.:',belief_distort_map)         
             print('iter:',msg,'Mean total payoffs:',payoff_map)
             print('iter:',msg,'Mean total participation:',{_n:n_context_appr_beliefs[_n][2] for _n in self.norm_context_list})
-        #utils.plot_gaussian(obs_appr_mean, obs_appr_var)
+        
         if msg == NUM_ITERS - 1:
             self.results_map['belief_distortion'] = belief_distort_map
             self.results_map['payoff'] = payoff_map
+            self.results_map['action_distortion'] = action_distortion_map
             if not self.no_print:
                 print(self.opinion_marginals,np.sum(self.opinion_marginals)/4)
                 print(np.sum(self.corr_mat,axis=0))
@@ -314,7 +334,13 @@ def calc_belief_distortion(env):
     return bel_distor
 
 def calc_action_distortion(env):
-    f=1
+    num_distors, pos_distors, neg_distors =[], [], []
+    for x in env.results_map['action_distortion'].values():
+        act_distor = np.array(x)
+        num_distors.append(np.count_nonzero(act_distor))
+        pos_distors.extend(np.extract(act_distor>0,act_distor).tolist())
+        neg_distors.extend(np.extract(act_distor<0,act_distor).tolist())
+    return [np.sum(num_distors), np.mean(pos_distors) if len(pos_distors) > 0 else np.nan, np.mean(neg_distors) if len(pos_distors) > 0 else np.nan]
 
 def calc_payoff(env):
     payoff = np.sum([abs(x) for x in env.results_map['payoff'].values()])
@@ -322,7 +348,7 @@ def calc_payoff(env):
 
 
 
-def train_moderator_polict():
+def train_moderator_policy():
     #cumul_res_dict = dict()
     batch_size,process_id = 10,0
     #y_array_info = dict()
@@ -334,10 +360,10 @@ def train_moderator_polict():
     for numrows in np.arange(batch_size):
         
         print('----------------------------->',numrows)
-        for rt_idx,run_type in enumerate(['community-ref']):
+        for rt_idx,run_type in enumerate(['moderator-ref']):
             sim_repeat_num = 1 if data_gen_mode else 30
             for r_itr in np.arange(sim_repeat_num):
-                prev_env,attr_dict = None,{'run_type':run_type,'baseline':True}
+                prev_env,attr_dict = None,{'run_type':run_type,'baseline':False}
                 for sidx,moderator_context_signal in enumerate(['n1']):
                     if sidx > 0:
                         attr_dict = {'players_private_contexts':prev_env.players_private_contexts,
@@ -345,7 +371,7 @@ def train_moderator_polict():
                                      'corr_mat':prev_env.corr_mat,
                                      'mutual_info_mat':prev_env.mutual_info_mat,
                                      'run_type':run_type,
-                                     'baseline':True}
+                                     'baseline':False}
                     
                     env = parallel_env(render_mode='human',attr_dict=attr_dict)
                     if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
@@ -367,7 +393,7 @@ def train_moderator_polict():
                     moderator_reward,moderator_reward_bd = process_moderator_reward(env)
                     y_array_info[env.moderator_context_signal] = moderator_reward_bd
                     '''
-                    bel_distor = calc_belief_distortion(env)
+                    bel_distor = calc_action_distortion(env)
                     #y_array_info[moderator_context_signal] = bel_distor[moderator_context_signal]
                     y_array_info.append(bel_distor)
                     prev_env = copy.copy(env)
@@ -451,13 +477,14 @@ def show_group_results():
     all_data_X,all_data_Y = None,None
     filename_x,filename_y = 'all_data_X_'+str(process_id)+'.csv','all_data_Y_'+str(process_id)+'.csv'
     #for rt_idx,run_type in enumerate(['baseline','self-ref','moderator-ref','community-ref]):
+    is_bel_distor_run = False
     for numrows in np.arange(batch_size):
         
         print('----------------------------->',numrows)
-        for rt_idx,run_type in enumerate(['moderator-ref']):
+        for rt_idx,run_type in enumerate(['community-ref']):
             sim_repeat_num = 1 if data_gen_mode else 30
             for r_itr in np.arange(sim_repeat_num):
-                prev_env,attr_dict = None,{'run_type':run_type,'baseline':False}
+                prev_env,attr_dict = None,{'run_type':run_type,'baseline':True}
                 opt_mod_signal_map = dict()
                 signals = ['n1','n2','n3','n4'] if run_type == 'moderator-ref' else ['n1']
                 for sidx,moderator_context_signal in enumerate(signals):
@@ -467,6 +494,93 @@ def show_group_results():
                                      'corr_mat':prev_env.corr_mat,
                                      'mutual_info_mat':prev_env.mutual_info_mat,
                                      'run_type':run_type,
+                                     'baseline':True}
+                    
+                    env = parallel_env(render_mode='human',attr_dict=attr_dict)
+                    if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
+                        break
+                    env.reset()
+                    env.no_print = True
+                    env.moderator_context_signal = moderator_context_signal
+                    for ag in env.possible_agents:
+                        if hasattr(ag, 'belief'): 
+                            del ag.belief
+                    for i in np.arange(NUM_ITERS):
+                        actions = {agent.id:agent.act(env,run_type) for agent in env.possible_agents}
+                        observations, rewards, terminations, truncations, infos = env.step(actions,i)
+                        for agent in env.possible_agents:
+                            agent.step_reward = rewards[agent.id]
+                            agent.total_reward += rewards[agent.id]
+                            agent.total_participation = agent.total_participation + 1 if agent.action[0] != -1 else agent.total_participation
+                    if is_bel_distor_run:
+                        distor = calc_belief_distortion(env)
+                        if run_type == 'moderator-ref':
+                            opt_mod_signal_map[moderator_context_signal] = distor
+                    else:
+                        distor = calc_action_distortion(env)   
+                        if run_type == 'moderator-ref':
+                            opt_mod_signal_map[moderator_context_signal] = distor
+                    prev_env = copy.copy(env)
+                if is_bel_distor_run:
+                    if run_type == 'moderator-ref':
+                        y_array_info.append(np.min(list(opt_mod_signal_map.values())))
+                    else:
+                        y_array_info.append(distor)
+                else:
+                    if run_type == 'moderator-ref':
+                        sorted_distor = [tuple(x) for x in opt_mod_signal_map.values()]
+                        sorted_distor.sort(key=lambda tup: tup[0])
+                        y_array_info.append(sorted_distor[0])
+                    else:
+                        y_array_info.append(distor)
+    f = open('results_by_group.csv', 'a')
+    writer = csv.writer(f)
+    baseline_tag = ' (beseline)' if env.baseline else ''
+    if is_bel_distor_run:
+        row = run_type+baseline_tag+' belief mean and sd distor',np.mean(y_array_info),np.std(y_array_info)
+    else:
+        y_array_info = np.array(y_array_info)
+        row = run_type+baseline_tag+' action distor',np.nanmean(y_array_info, axis = 0),np.nanstd(y_array_info, axis = 0)
+    writer.writerow(row)
+    f.close()
+    print(row)
+    
+def generate_moderator_optimal_action_grid():
+    x_array_info,y_array_info = None, None
+    ref_op_marginal_theta = [0.61,0.3,0.58,0.8]
+    processed_list = []
+    x_array_path = Path('grid_run_values_x_'+','.join(utils.list_to_str(ref_op_marginal_theta))+'.csv')
+    if x_array_path.is_file():
+        x_processed = np.genfromtxt('grid_run_values_x_'+','.join(utils.list_to_str(ref_op_marginal_theta))+'.csv', delimiter=',')
+        processed_list = [(x_processed[i,0],x_processed[i,1]) for i in np.arange(x_processed.shape[0])]
+    for corr_idx in np.arange(5):
+        for distr_idx in np.arange(10):
+            if (corr_idx,distr_idx) in processed_list:
+                continue
+            opt_mod_signal_map = dict()
+            for rep_idx in np.arange(10):
+                norm_contexts_distr = {'n1':np.linspace(0.1,.9,10)[distr_idx]}
+                norm_contexts_distr.update({x:(1-norm_contexts_distr['n1'])/3 for x in ['n2','n3','n4']})
+                
+                print('----------------------------->',corr_idx,distr_idx)
+                run_type= 'moderator-ref'
+                prev_env,attr_dict = None,{'run_type':run_type,
+                                           'ref_op_marginal_theta':ref_op_marginal_theta,
+                                           'corr_idx':corr_idx,
+                                           'norm_contexts_distr':norm_contexts_distr,
+                                           'baseline':False}
+                
+                signals = ['n1','n2','n3','n4'] if run_type == 'moderator-ref' else ['n1']
+                for sidx,moderator_context_signal in enumerate(signals):
+                    if sidx > 0:
+                        attr_dict = {'players_private_contexts':prev_env.players_private_contexts,
+                                     'opinions':prev_env.opinions,
+                                     'corr_mat':prev_env.corr_mat,
+                                     'mutual_info_mat':prev_env.mutual_info_mat,
+                                     'run_type':run_type,
+                                     'ref_op_marginal_theta':ref_op_marginal_theta,
+                                     'corr_idx':corr_idx,
+                                     'norm_contexts_distr':norm_contexts_distr,
                                      'baseline':False}
                     
                     env = parallel_env(render_mode='human',attr_dict=attr_dict)
@@ -485,87 +599,16 @@ def show_group_results():
                             agent.step_reward = rewards[agent.id]
                             agent.total_reward += rewards[agent.id]
                             agent.total_participation = agent.total_participation + 1 if agent.action[0] != -1 else agent.total_participation
-                    '''
-                    moderator_reward,moderator_reward_bd = process_moderator_reward(env)
-                    y_array_info[env.moderator_context_signal] = moderator_reward_bd
-                    '''
                     bel_distor = calc_belief_distortion(env)
-                    #bel_distor = calc_payoff(env)
-                    if run_type == 'moderator-ref':
-                        opt_mod_signal_map[moderator_context_signal] = bel_distor
-                    #y_array_info[moderator_context_signal] = bel_distor[moderator_context_signal]
+                    if moderator_context_signal not in opt_mod_signal_map:
+                        opt_mod_signal_map[moderator_context_signal] = []
+                    opt_mod_signal_map[moderator_context_signal].append(bel_distor)
                     prev_env = copy.copy(env)
-                if run_type == 'moderator-ref':
-                    y_array_info.append(np.min(list(opt_mod_signal_map.values())))
-                else:
-                    y_array_info.append(bel_distor)
-    f = open('results_by_group.csv', 'a')
-    writer = csv.writer(f)
-    baseline_tag = ' (beseline)' if env.baseline else ''
-    row = run_type+baseline_tag+' belief mean and sd distor',np.mean(y_array_info),np.std(y_array_info)
-    writer.writerow(row)
-    f.close()
-    print(row)
-    
-def generate_moderator_optimal_action_grid():
-    x_array_info,y_array_info = None, None
-    ref_op_marginal_theta = [0.61,0.3,0.58,0.8]
-    processed_list = []
-    x_array_path = Path('grid_run_values_x.csv')
-    if x_array_path.is_file():
-        x_processed = np.genfromtxt('grid_run_values_x.csv', delimiter=',')
-        processed_list = [(x_processed[i,0],x_processed[i,1]) for i in np.arange(x_processed.shape[0])]
-    for corr_idx in np.arange(5):
-        for distr_idx in np.arange(10):
-            if (corr_idx,distr_idx) in processed_list:
-                continue
-            norm_contexts_distr = {'n1':np.linspace(0.1,.9,10)[distr_idx]}
-            norm_contexts_distr.update({x:(1-norm_contexts_distr['n1'])/3 for x in ['n2','n3','n4']})
+                norm_sum_corr_val = env.corr_mat_ref_sum
             
-            print('----------------------------->',corr_idx,distr_idx)
-            run_type= 'moderator-ref'
-            prev_env,attr_dict = None,{'run_type':run_type,
-                                       'ref_op_marginal_theta':ref_op_marginal_theta,
-                                       'corr_idx':corr_idx,
-                                       'norm_contexts_distr':norm_contexts_distr,
-                                       'baseline':False}
-            opt_mod_signal_map = dict()
-            signals = ['n1','n2','n3','n4'] if run_type == 'moderator-ref' else ['n1']
-            for sidx,moderator_context_signal in enumerate(signals):
-                if sidx > 0:
-                    attr_dict = {'players_private_contexts':prev_env.players_private_contexts,
-                                 'opinions':prev_env.opinions,
-                                 'corr_mat':prev_env.corr_mat,
-                                 'mutual_info_mat':prev_env.mutual_info_mat,
-                                 'run_type':run_type,
-                                 'ref_op_marginal_theta':ref_op_marginal_theta,
-                                 'corr_idx':corr_idx,
-                                 'norm_contexts_distr':norm_contexts_distr,
-                                 'baseline':False}
-                
-                env = parallel_env(render_mode='human',attr_dict=attr_dict)
-                if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
-                    break
-                env.reset()
-                env.no_print = True
-                env.moderator_context_signal = moderator_context_signal
-                for ag in env.possible_agents:
-                    if hasattr(ag, 'belief'): 
-                        del ag.belief
-                for i in np.arange(NUM_ITERS):
-                    actions = {agent.id:agent.act(env,run_type) for agent in env.possible_agents}
-                    observations, rewards, terminations, truncations, infos = env.step(actions,i)
-                    for agent in env.possible_agents:
-                        agent.step_reward = rewards[agent.id]
-                        agent.total_reward += rewards[agent.id]
-                        agent.total_participation = agent.total_participation + 1 if agent.action[0] != -1 else agent.total_participation
-                bel_distor = calc_belief_distortion(env)
-                opt_mod_signal_map[moderator_context_signal] = bel_distor
-                prev_env = copy.copy(env)
-            norm_sum_corr_val = env.corr_mat_ref_sum
             norm_occurance_support_val = norm_contexts_distr['n1']
             x_entry = np.array([corr_idx,distr_idx,norm_sum_corr_val,norm_occurance_support_val]).reshape((1,4))
-            y_entry = np.array([opt_mod_signal_map[x] for x in env.norm_context_list]).reshape((1,4))
+            y_entry = np.array([np.mean(opt_mod_signal_map[x]) for x in env.norm_context_list]).reshape((1,4))
             
             if x_array_info is None:
                 x_array_info = np.copy(x_entry)
@@ -577,9 +620,9 @@ def generate_moderator_optimal_action_grid():
             else:
                 y_array_info = np.append(y_array_info,y_entry,axis=0)
     
-            with open('grid_run_values_x.csv', "a") as f:
+            with open('grid_run_values_x_'+','.join(utils.list_to_str(ref_op_marginal_theta))+'.csv', "a") as f:
                 np.savetxt(f, x_array_info, delimiter=",")
-            with open('grid_run_values_y.csv', "a") as f:
+            with open('grid_run_values_y_'+','.join(utils.list_to_str(ref_op_marginal_theta))+'.csv', "a") as f:
                 np.savetxt(f, y_array_info, delimiter=",")                
                             
             x_array_info,y_array_info = None, None
@@ -587,8 +630,8 @@ def generate_moderator_optimal_action_grid():
 
 def process_grid_results():
     
-    x_arr = np.genfromtxt('grid_run_results\\grid_run_values_x_0.61,0.3,0.58,0.8.csv', delimiter=',')
-    y_arr = np.genfromtxt('grid_run_results\\grid_run_values_y_0.61,0.3,0.58,0.8.csv', delimiter=',')
+    x_arr = np.genfromtxt('grid_run_results_30\\grid_run_values_x_0.61,0.3,0.58,0.8.csv', delimiter=',')
+    y_arr = np.genfromtxt('grid_run_results_30\\grid_run_values_y_0.61,0.3,0.58,0.8.csv', delimiter=',')
     '''
     x_arr = np.genfromtxt('grid_run_values_x.csv', delimiter=',')
     y_arr = np.genfromtxt('grid_run_values_y.csv', delimiter=',')
@@ -615,6 +658,119 @@ def process_grid_results():
             
     
     plt.show()
-process_grid_results()
+
+#process_grid_results()
+
+def process_all_grids():
+    _files =os.listdir('grid_run_results_30')
+    all_files_dict = dict()
+    for f in _files:
+        x_file = f.split('_')[3]
+        apr_distr_tag = f.split('_')[-1][:-4]
+        if apr_distr_tag not in all_files_dict:
+            all_files_dict[apr_distr_tag] = [None,None]
+        if x_file == 'x':
+            all_files_dict[apr_distr_tag][0] = f
+        else:
+            all_files_dict[apr_distr_tag][1] = f
+    f=1
+    fig, ax = plt.subplots(nrows=1,ncols=5)
+    
+    ax_ctr = 0
+    for k,v in all_files_dict.items():
+        apr_distr_tag = v[0].split('_')[-1][:-4]
+        x_arr = np.genfromtxt('grid_run_results_30\\'+str(v[0]), delimiter=',')
+        y_arr = np.genfromtxt('grid_run_results_30\\'+str(v[1]), delimiter=',')
+        y_arr = 1-y_arr
+        y_arr_softmax = softmax(y_arr,axis=1)
+        distr_arr = x_arr[:,3]
+        corr_arr = x_arr[:,2]
+        y_argmax_indices = np.argmax(y_arr,axis=1)
+        y_arr = y_arr[:,0]
+        '''
+        y_arr_ind_sel = np.copy(y_arr)[:,0]
+        for i in np.arange(y_arr_ind_sel.shape[0]):
+            y_arr_ind_sel[i] = 1 if y_argmax_indices[i] == 0 else 0
+        y_arr = y_arr_ind_sel
+        '''
+        x_arr = x_arr[:,:2].astype(np.int32)
+        
+        
+        intersection_matrix = np.full(shape=(5,10), fill_value=np.nan)
+        for xrow,yrow in zip(x_arr,y_arr):
+            intersection_matrix[xrow[0],xrow[1]] = yrow
+        
+        
+        ax[ax_ctr].matshow(intersection_matrix, cmap=plt.cm.Blues)
+        
+        for i in range(intersection_matrix.shape[0]):
+            ax[ax_ctr].text(-1.5, i, str(round(corr_arr[int(i*10)],2)), va='center', ha='center',fontsize='xx-small')
+            for j in range(intersection_matrix.shape[1]):
+                if i==0:
+                    ax[ax_ctr].text(j, -1.5, str(round(distr_arr[j],2)), va='center', ha='center',fontsize='xx-small')
+                c = intersection_matrix[i,j]
+                ax[ax_ctr].text(j, i, str(round(c,2)), va='center', ha='center',fontsize='xx-small')
+        ax[ax_ctr].set_title(str(apr_distr_tag),fontsize='xx-small')
+        ax[ax_ctr].set_axis_off()
+        ax_ctr += 1
+    plt.show()
+#process_all_grids()
+
+def plot_action_distortion_by_group():
+    fig, ax = plt.subplots(nrows=4, sharex=True)
+    ctr = 0
+    with open('results_by_group.csv') as file:
+        for line in file:
+            line.rstrip()
+            if 'action distor' in line:
+                m = re.findall('\[(.+?)\]', line)
+                mean_str = [float(x) for x in m[0].split(',')]
+                std_str = [float(x) for x in m[1].split(',')]
+                for i in [1,2]:
+                    utils.plot_gaussian(mean_str[i], std_str[i]**2,ax=ax[ctr],vert_line_at=1.5 if i==2 else -1.5)
+                if 'baseline' in line:
+                    ax[ctr].set_title(''.join(line.split(' ')[:2]))
+                else:
+                    ax[ctr].set_title(''.join(line.split(' ')[0]))
+                ctr += 1  
+    fig, ax = plt.subplots(nrows=4, sharex=True)
+    ctr = 0
+    with open('results_by_group.csv') as file:
+        for line in file:
+            line.rstrip()
+            if 'action distor' in line:
+                m = re.findall('\[(.+?)\]', line)
+                mean_str = [float(x) for x in m[0].split(',')]
+                std_str = [float(x) for x in m[1].split(',')]
+                utils.plot_gaussian(mean_str[0], std_str[0]**2,ax=ax[ctr])
+                if 'baseline' in line:
+                    ax[ctr].set_title(''.join(line.split(' ')[:2]))
+                else:
+                    ax[ctr].set_title(''.join(line.split(' ')[0]))
+                ctr += 1  
+    plt.show()
+
+def plot_belief_distortion_by_group():
+    fig, ax = plt.subplots(nrows=4, sharex=True)
+    ctr = 0
+    with open('results_by_group.csv') as file:
+        for line in file:
+            line.rstrip()
+            if 'belief' in line:
+                m = re.findall('\[(.+?)\]', line)
+                mean_str = float(line.split(',')[-2])
+                std_str = float(line.split(',')[-1])
+                utils.plot_gaussian(mean_str, std_str**2,ax=ax[ctr])
+                if 'baseline' in line:
+                    ax[ctr].set_title(''.join(line.split(' ')[:2]))
+                else:
+                    ax[ctr].set_title(''.join(line.split(' ')[0]))
+                ctr += 1  
+    plt.show()
+                
+                
+
+#plot_belief_distortion_by_group()        
+
     
     

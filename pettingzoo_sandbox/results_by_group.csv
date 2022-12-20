@@ -1,5 +1,11 @@
 
-community-ref (beseline) belief mean and sd distor,0.042821599654287834,0.03771185060928656
-self-ref belief mean and sd distor,0.4531255539318269,0.12450718426448244
-moderator-ref belief mean and sd distor,0.03261396474120607,0.02155133218759087
+community-ref (baseline) belief mean and sd distor,0.042821599654287834,0.03771185060928656
+self-ref belief mean and sd distor,0.13327385321112692,0.13011205078426016moderator-ref belief mean and sd distor,0.03261396474120607,0.02155133218759087
 community-ref belief mean and sd distor,0.2952581880222545,0.3480231675486085
+--------------------------------------------------------------------------
+
+
+self-ref action distor,[ 9.1 ,        1.50923783 ,-1.42413801],[8.0925892 , 0.040889 ,  0.20858435]
+moderator-ref action distor,[ 3.2    ,     1.49529284, -1.51422789],[2.48193473, 0.07483878, 0.10836617]
+community-ref action distor,[ 7.1  ,       1.50917219, -1.49749351],[5.24309069, 0.07589758, 0.1542407 ]
+community-ref (baseline) action distor,[ 4.3     ,    1.43696651, -1.50470756],[2.60959767, 0.08022443 ,0.10851536]

@@ -38,6 +38,19 @@ class Player():
         self.total_reward = 0
         self.total_participation = 0
     
+    def get_act_for_apr_theta(self,apr_theta):
+        if self.opinion[self.norm_context] >= 0.5:
+            op = 1
+        else:
+            op = 0
+        util = lambda op : op if op > 0.5 else (1-op)
+        bel_op = apr_theta if op==1 else 1-apr_theta
+        prob_of_N = (bel_op*util(self.opinion[self.norm_context]))/self.payoff_tol
+        if prob_of_N > 1:
+            return self.opinion[self.norm_context]
+        else:
+            return -1
+    
     def act(self, env, run_type):
         if run_type in ['baseline','self-ref']:
             return self.act_self_ref(env)
