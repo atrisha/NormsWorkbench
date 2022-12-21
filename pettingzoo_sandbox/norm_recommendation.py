@@ -17,6 +17,7 @@ import csv
 from pathlib import Path
 from scipy.special import softmax
 import re
+from collections import Counter
 
 NUM_ITERS = 10
 
@@ -48,6 +49,7 @@ def raw_env(render_mode=None):
     env = parallel_env(render_mode=render_mode)
     env = parallel_to_aec(env)
     return env
+
 
 
 class parallel_env(ParallelEnv):
@@ -100,9 +102,9 @@ class parallel_env(ParallelEnv):
                 self.corr_mat_grid = utils.generate_corr_mat_grid(self.ref_op_marginal_theta, (0,self.corr_idx))
                 self.opinions,self.corr_mat,self.mutual_info_mat = utils.generate_grid_samples(self.corr_mat_grid,self.ref_op_marginal_theta,(0,self.corr_idx))
         self.corr_mat_ref_sum = np.sum(self.corr_mat[0,:])-1
+        self.constructed_corr_mat = self.construct_correlation_from_opinions()
+        self.constructed_corr_mat_ref_sum = np.sum(self.constructed_corr_mat[0,:])-1
         
-            
-                
         opinions = self.opinions
         
         self.opinion_marginals = dict()
@@ -323,6 +325,19 @@ class parallel_env(ParallelEnv):
         else:
             observed_actions = np.array([(ag.action[2],ag.norm_context) for ag in self.agents if ag.action[0]!=-1])
         return observed_actions
+    
+    def construct_correlation_from_opinions(self):
+        num_contexts = self.opinions.shape[1]
+        corr_mat = np.ones(shape=(num_contexts,num_contexts))
+        for i in np.arange(num_contexts):
+            for j in np.arange(num_contexts):
+                if j>i:
+                    _op_view = np.take(self.opinions,[i,j],axis=1)
+                    _op_ct = Counter([tuple(_op_view[pl_idx,:]) for pl_idx in np.arange(self.num_players)])
+                    corr_val = (_op_ct[(0.0,0.0)]+_op_ct[(1.0,1.0)])/np.sum(list(_op_ct.values()))
+                    corr_mat[i,j] = corr_val
+                    corr_mat[j,i] = corr_val
+        return corr_mat
 
 def process_moderator_reward(env):
     moderator_reward_socialwelfare_max = np.sum([abs(x) for x in env.results_map['payoff'].values()]) - np.sum([abs(x) for x in env.results_map['belief_distortion'].values()])
@@ -547,7 +562,7 @@ def show_group_results():
     
 def generate_moderator_optimal_action_grid():
     x_array_info,y_array_info = None, None
-    ref_op_marginal_theta = [0.61,0.3,0.58,0.8]
+    ref_op_marginal_theta = [0.3,0.61,0.58,0.8]
     processed_list = []
     x_array_path = Path('grid_run_values_x_'+','.join(utils.list_to_str(ref_op_marginal_theta))+'.csv')
     if x_array_path.is_file():
@@ -605,9 +620,10 @@ def generate_moderator_optimal_action_grid():
                     opt_mod_signal_map[moderator_context_signal].append(bel_distor)
                     prev_env = copy.copy(env)
                 norm_sum_corr_val = env.corr_mat_ref_sum
+                norm_sum_constructed_corr_val = env.constructed_corr_mat_ref_sum
             
             norm_occurance_support_val = norm_contexts_distr['n1']
-            x_entry = np.array([corr_idx,distr_idx,norm_sum_corr_val,norm_occurance_support_val]).reshape((1,4))
+            x_entry = np.array([corr_idx,distr_idx,norm_sum_corr_val,norm_sum_constructed_corr_val,norm_occurance_support_val]).reshape((1,5))
             y_entry = np.array([np.mean(opt_mod_signal_map[x]) for x in env.norm_context_list]).reshape((1,4))
             
             if x_array_info is None:
@@ -630,17 +646,17 @@ def generate_moderator_optimal_action_grid():
 
 def process_grid_results():
     
-    x_arr = np.genfromtxt('grid_run_results_30\\grid_run_values_x_0.61,0.3,0.58,0.8.csv', delimiter=',')
-    y_arr = np.genfromtxt('grid_run_results_30\\grid_run_values_y_0.61,0.3,0.58,0.8.csv', delimiter=',')
+    x_arr = np.genfromtxt('grid_run_values_x_0.3,0.61,0.58,0.8.csv', delimiter=',')
+    y_arr = np.genfromtxt('grid_run_values_y_0.3,0.61,0.58,0.8.csv', delimiter=',')
     '''
     x_arr = np.genfromtxt('grid_run_values_x.csv', delimiter=',')
     y_arr = np.genfromtxt('grid_run_values_y.csv', delimiter=',')
     '''
     y_arr = 1-y_arr
     #y_arr = softmax(y_arr,axis=1)
-    corr_arr = x_arr[:,2]
+    corr_arr = x_arr[:,3]
     y_arr =y_arr[:,0]
-    x_arr = x_arr[:,:2].astype(np.int32)
+    x_arr = x_arr[:,:3].astype(np.int32)
     fig, ax = plt.subplots()
     
     intersection_matrix = np.full(shape=(5,10), fill_value=np.nan)
