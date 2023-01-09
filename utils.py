@@ -13,9 +13,9 @@ from scipy.stats import beta
 import itertools
 from Equilibria import CorrelatedEquilibria, PureNashEquilibria
 from collections import Counter
-import rpy2.robjects as robjects
-import rpy2.robjects.numpy2ri
-from rpy2.robjects.packages import importr
+#import rpy2.robjects as robjects
+#import rpy2.robjects.numpy2ri
+#from rpy2.robjects.packages import importr
 import warnings
 
 def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
@@ -385,6 +385,18 @@ def get_priors_from_true(true_distr):
         raise
     return priors
 
+def generate_correleted_opinions(marginal_params,correlation_val,size):
+    mvnorm = stats.multivariate_normal(mean=[0, 0], cov=[[1., correlation_val], 
+                                                     [correlation_val, 1.]])
+    x = mvnorm.rvs(size)
+    norm = stats.norm()
+    x_unif = norm.cdf(x)
+    m1 = stats.beta(a=marginal_params[0][0], b=marginal_params[0][1])
+    m2 = stats.beta(a=marginal_params[1][0], b=marginal_params[1][1])
+    x1_trans = m1.ppf(x_unif[:, 0])
+    x2_trans = m2.ppf(x_unif[:, 1])
+    samples = np.column_stack([x1_trans,x2_trans])
+    return samples
 '''
 opinions,corr_mat = generate_samples()
 opinion_marginals = np.sum(opinions,axis=0)/100

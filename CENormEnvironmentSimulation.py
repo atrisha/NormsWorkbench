@@ -21,6 +21,7 @@ from constants import op_mode, num_players
 from scipy import interpolate
 from sklearn.preprocessing import normalize
 from numpy import genfromtxt
+from collections import Counter
 
 class Player():
     
@@ -975,7 +976,51 @@ print('distortion',sim_res[-1].distortion_of_mean)
 plot_action_selection_charts(True)
 '''
 
-
+class SingleContextModel():
+    
+    def simple_repeated_interaction(self):
+        class Player():
+            def __init__(self,op,u_bar):
+                self.op = op
+                self.u_bar = u_bar
+        
+        u_bar = 0.3
+        cost = lambda x : entropy([x,1-x])
+        util = lambda op : op if op > 0.5 else (1-op)
+        theta_prior = (2,1)
+        theta_prime = theta_prior
+        op_distr = None
+        players = [Player(o,u_bar) for o in np.random.uniform(size=100)]
+        bels = []
+        print('prior:',theta_prior[0]/sum(theta_prior))
+        for run_idx in np.arange(300):
+            '''
+            if run_idx ==0:
+                plt.hist([pl.op for pl in players],bins=10)
+                plt.show()
+            '''
+            for pl in players:
+                if pl.op>=0.5:
+                    bel_op = theta_prime[0]/sum(theta_prime)
+                else:
+                    bel_op = 1-(theta_prime[0]/sum(theta_prime))
+                prob_of_N = (bel_op*util(pl.op))/u_bar
+                pl.act = 'e' if prob_of_N > 1 else 'n'
+            op_distr = np.mean([pl.op if pl.op > 0.5 else 1-pl.op for pl in players if pl.act=='e'])
+            theta_prime_rate = np.mean([pl.op for pl in players if pl.act=='e'])
+            h = theta_prime_rate*10
+            theta_prime = (theta_prime[0]+h,theta_prime[1]+(10-h))
+            print(run_idx,theta_prime[0]/sum(theta_prime),Counter([pl.act for pl in players]))
+            '''
+            plt.hist([pl.op for pl in players if pl.act=='e'],bins=10)
+            plt.show()
+            '''
+            bels.append(theta_prime[0]/sum(theta_prime))
+        theta_prior_h = theta_prior[0]/sum(theta_prior)
+        eq_ratio = ((u_bar/theta_prior_h)-0.5)/((u_bar/theta_prior_h)+(u_bar/(1-theta_prior_h))-1)
+        
+        print(theta_prime[0]/sum(theta_prime),op_distr)
+        return bels
 
 
 class HeterogenousContextSimulation():
