@@ -186,7 +186,7 @@ def plot_multivariate_gaussian(mean,corr):
     plt.show()
     
 def action_selection_gird(op_strat=False):
-    theta = 0.1
+    theta = 0.3
     cost = lambda x : entropy([x,1-x])
     util = lambda op : op if op > 0.5 else (1-op)
     bel_op = np.linspace(0,1,100)
@@ -212,11 +212,56 @@ def action_selection_gird(op_strat=False):
             #prob_of_N = (bel_op*(util(op)-cost(op)))/theta
             prob_of_N = (bel_op*util(op))/theta
             Z.append(prob_of_N)
+            Z2.append(1)
             if op_strat:
                 if prob_of_N > 1:
                     Z2.append(1)
                 else:
                     Z2.append(0)
+            
+    
+    # reshape Z
+    
+    Z = np.array(Z).reshape(xs.shape)
+    Z2 = np.array(Z2).reshape(xs.shape)
+    
+    # interpolate your values on the grid defined above
+    f_interp = RectBivariateSpline(x,y, Z)
+    X_grid, Y_grid = np.meshgrid(np.linspace(0,1,100), np.linspace(0,1,100))
+    Z_grid = f_interp(np.linspace(0,1,100), np.linspace(0,1,100))
+    Z2_grid = f_interp(np.linspace(0,1,10), np.linspace(0,1,10))
+    if not op_strat:
+        ax.plot_surface(xs,ys,Z,
+                cmap='viridis', edgecolor='none', rcount=200, ccount=200)
+        ax.plot_surface(xs,ys,Z2,cmap='cividis', edgecolor='none', rcount=20, ccount=20)
+    else:
+        Z2 = np.array(Z2).reshape(xs.shape)
+        ax.plot_surface(xs,ys,Z2-1,cmap='cividis', edgecolor='none', rcount=20, ccount=20)
+    ax.set_xlabel('opinion value $o_{i}$')
+    ax.set_zlabel('action selection ratio')
+    ax.set_ylabel('descriptive concordant beliefs $b(o_{i})$')
+    plt.gca().invert_xaxis()
+    #plt.gca().invert_yaxis()
+    plt.show()
+
+def plot_surface():
+    ax = plt.axes(projection='3d')
+    
+
+    
+    x = np.linspace(0,1,100)
+    y = np.linspace(0,1,100)
+    
+    #constants.cen_belief = 2.5,2
+    #constants.cen_true_distr = 4,2
+    
+    
+    xs, ys = np.meshgrid(x, y)
+    Z=[]
+    for i in range(len(xs)):
+        for j in range(len(xs[0])):
+            Z.append((xs[i][j]+ ys[i][j])/2)
+            
             
     
     # reshape Z
@@ -228,16 +273,14 @@ def action_selection_gird(op_strat=False):
     X_grid, Y_grid = np.meshgrid(np.linspace(0,1,100), np.linspace(0,1,100))
     Z_grid = f_interp(np.linspace(0,1,100), np.linspace(0,1,100))
     Z2_grid = f_interp(np.linspace(0,1,10), np.linspace(0,1,10))
-    if not op_strat:
-        ax.plot_surface(xs,ys,Z,
+    ax.plot_surface(xs,ys,Z,
                 cmap='viridis', edgecolor='none', rcount=200, ccount=200)
-    else:
-        Z2 = np.array(Z2).reshape(xs.shape)
-        ax.plot_surface(xs,ys,Z2-1,cmap='cividis', edgecolor='none', rcount=20, ccount=20)
-    ax.set_xlabel('opinion value')
-    ax.set_zlabel('Opinion selection ratio')
-    ax.set_ylabel('Descriptive supporting belief')
+    
+    plt.gca().invert_xaxis()
+    plt.gca().invert_yaxis()
     plt.show()
+
+plot_surface()
 
 def simple_repeated_interaction():
     class Player():
@@ -289,7 +332,7 @@ def simple_repeated_interaction():
     print(theta_prime[0]/sum(theta_prime),op_distr)
     return bels
 #simple_repeated_interaction()
-'''
+
 end_thetas = []
 for i in np.arange(100):
     bels = simple_repeated_interaction()
@@ -298,7 +341,7 @@ for i in np.arange(100):
 plt.figure()
 plt.hist(end_thetas,bins=10)
 plt.show()
-'''
+
 def simple_egocentric_two_context_model_repeated_interaction():
     class Player():
         def __init__(self,op,u_bar):
@@ -358,7 +401,7 @@ def simple_egocentric_two_context_model_repeated_interaction():
     
     print(theta_prime[0]/sum(theta_prime),op_distr)
     return bels_ctx1,bels_ctx2
-
+'''
 end_thetas = []
 for i in np.arange(100):
     bels_ctx1,bels_ctx2 = simple_egocentric_two_context_model_repeated_interaction()
@@ -369,7 +412,7 @@ for i in np.arange(100):
 plt.figure()
 plt.hist(end_thetas,bins=10)
 plt.show()   
-
+'''
 def simple_normative_signal_two_context_model_repeated_interaction(b_idx):
     class Player():
         def __init__(self,op,u_bar):

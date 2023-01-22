@@ -5,7 +5,6 @@ from gymnasium.spaces import Discrete, Box
 import numpy as np
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
-from CENormEnvironmentSimulation import Player
 import constants
 import utils
 import matplotlib.pyplot as plt
@@ -21,6 +20,306 @@ from collections import Counter
 
 NUM_ITERS = 10
 
+class Player():
+    
+    def __init__(self,id):
+        self.id = id
+        self.payoff_tol = constants.payoff_tol
+        self.opinion = dict()
+        self.opinion_val = dict()
+        
+        '''
+        if real_p:
+            self.shadow_player = Player(-id,False)
+        '''
+        
+        self.total_reward = 0
+        self.total_participation = 0
+    
+    def get_act_for_apr_theta(self,apr_theta):
+        if self.opinion[self.norm_context] >= 0.5:
+            op = 1
+        else:
+            op = 0
+        util = lambda op : op if op > 0.5 else (1-op)
+        bel_op = apr_theta if op==1 else 1-apr_theta
+        prob_of_N = (bel_op*util(self.opinion[self.norm_context]))/self.payoff_tol
+        if prob_of_N > 1:
+            return self.opinion[self.norm_context]
+        else:
+            return -1
+    
+    def act(self, env, run_type):
+        if run_type in ['baseline','self-ref']:
+            return self.act_self_ref(env)
+        else:
+            if run_type in ['community-ref']:
+                return self.act_community_ref_bne(env)
+            else:
+                return self.act_moderator_ref_bne(env)
+        
+        
+    def act_self_ref(self, env):
+        ''' This is a petting zoo framework method '''
+        '''
+        The required information are:
+        belief about the distribution on opinion (already should be in player object)
+        self opinion (already should have been initialized)
+        '''
+        util = lambda op : op if op > 0.5 else (1-op)
+        if self.opinion[self.norm_context] >= 0.5:
+            op = 1
+        else:
+            op = 0
+        if not hasattr(self, 'belief'):
+            self.belief = utils.get_priors_from_true(env.opinion_marginals)
+            self.belief = {n:self.belief[nidx] for nidx,n in enumerate(env.norm_context_list)}
+            self.belief = {self.norm_context:self.belief[self.norm_context]}
+        
+        ''' Update the beliefs from the previous observations '''
+        if env.observations is not None:
+            norm_consideration_list = [self.norm_context]
+            obs = env.complete_observations
+            obs_samples = [(np.sum(np.random.choice([1,0],size=10,p=[op_val,1-op_val])),) for op_val in obs]
+            xs = [(s[0],10-s[0]) for s in obs_samples]
+            thetas = np.array([[self.belief[n], 1-self.belief[n]] for n in norm_consideration_list])
+            i, thetas, ws = utils.em(xs, thetas)
+            ws = np.mean(ws,axis=1)
+            self.belief = {n:thetas[nidx][0] for nidx,n in enumerate(norm_consideration_list)}
+        bel_op = self.belief[self.norm_context] if op == 1 else 1-self.belief[self.norm_context]
+        prob_of_N = (bel_op*util(self.opinion[self.norm_context]))/self.payoff_tol
+        if prob_of_N > 1:
+            self.action_util = util(self.opinion[self.norm_context])
+            self.action_code = op
+        else:
+            self.action_code = -1
+            self.action_util = self.payoff_tol
+        self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
+        return self.action
+    
+    def act_community_ref_bne(self, env):
+        ''' This is a petting zoo framework method '''
+        '''
+        The required information are:
+        belief about the distribution on opinion (already should be in player object)
+        self opinion (already should have been initialized)
+        '''
+        util = lambda op : op if op > 0.5 else (1-op)
+        if self.opinion[self.norm_context] >= 0.5:
+            op = 1
+        else:
+            op = 0
+        if not hasattr(self, 'belief'):
+            self.belief = utils.get_priors_from_true(env.opinion_marginals)
+            self.belief = {n:self.belief[nidx] for nidx,n in enumerate(env.norm_context_list)}
+            self.norm_prop = {n:0.25 for nidx,n in enumerate(env.norm_context_list)}
+        ''' Update the beliefs from the previous observations '''
+        if env.observations is not None:
+            ''' Observations are common and public, so no need for agent index'''
+            
+            obs = env.complete_observations if not self.complete_information else env.get_complete_information()
+            
+            if self.complete_information:
+                obs_samples = [(np.sum(np.random.choice([1,0],size=10,p=[op_val,1-op_val])),) for op_val in [float(x[0]) for x in obs]]
+                obs_norm_contexts = [x[1] for x in obs]
+                xs = [(s[0],10-s[0]) for s in obs_samples]
+                updated_thetas,updated_props = utils.mle(zip(xs,obs_norm_contexts))
+                self.belief.update(updated_thetas)
+                self.norm_prop.update(updated_props)
+            else:
+                obs_samples = [(np.sum(np.random.choice([1,0],size=10,p=[op_val,1-op_val])),) for op_val in obs]
+                xs = [(s[0],10-s[0]) for s in obs_samples]
+                thetas = np.array([[self.belief[n], 1-self.belief[n]] for n in env.norm_context_list])
+                i, thetas, ws = utils.em(xs, thetas)
+                ws = np.mean(ws,axis=1)
+                self.belief = {n:thetas[nidx][0] for nidx,n in enumerate(env.norm_context_list)}
+                self.norm_prop = {n:ws[nidx] for nidx,n in enumerate(env.norm_context_list)}
+            
+            #self.belief = {n:env.opinion_marginals[nidx] for nidx,n in enumerate(env.norm_context_list)}
+            #self.norm_prop = {n:env.norm_contexts_distr[n] for nidx,n in enumerate(env.norm_context_list)}
+        bel_op_all_norms = {n:self.belief[n] if op == 1 else 1-self.belief[n] for nidx,n in enumerate(['n1','n2','n3','n4'])}
+        exp_n = 0
+        for n,bel_for_n in bel_op_all_norms.items():
+            exp_prob_n_for_bel = self.norm_prop[n]*(bel_for_n*util(self.opinion[self.norm_context]))/self.payoff_tol
+            exp_n += exp_prob_n_for_bel 
+        if exp_n > 1:
+            self.action_util = util(self.opinion[self.norm_context])
+            self.action_code = op
+        else:
+            self.action_code = -1
+            self.action_util = self.payoff_tol
+        self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
+        return self.action
+    
+    def act_moderator_ref_bne(self, env):
+        ''' This is a petting zoo framework method '''
+        '''
+        The required information are:
+        belief about the distribution on opinion (already should be in player object)
+        self opinion (already should have been initialized)
+        '''
+        util = lambda op : op if op > 0.5 else (1-op)
+        if self.opinion[self.norm_context] >= 0.5:
+            op = 1
+        else:
+            op = 0
+        if env.moderator_context_signal!=self.norm_context:
+            norm_consideration_list = [env.moderator_context_signal,self.norm_context]
+        else:
+            norm_consideration_list = [self.norm_context]
+        if not hasattr(self, 'belief'):
+            self.belief = utils.get_priors_from_true(env.opinion_marginals)
+            self.belief = {n:self.belief[nidx] for nidx,n in enumerate(env.norm_context_list)}
+            self.belief = {n:self.belief[n] for nidx,n in enumerate(norm_consideration_list)}
+            self.norm_prop = {n:1/len(norm_consideration_list) for nidx,n in enumerate(norm_consideration_list)}
+            
+        ''' Update the beliefs from the previous observations '''
+        if env.observations is not None:
+            ''' Observations are common and public, so no need for agent index'''
+            
+            obs = env.complete_observations
+            obs_samples = [(np.sum(np.random.choice([1,0],size=10,p=[op_val,1-op_val])),) for op_val in obs]
+            xs = [(s[0],10-s[0]) for s in obs_samples]
+            thetas = np.array([[self.belief[n], 1-self.belief[n]] for n in norm_consideration_list])
+            i, thetas, ws = utils.em(xs, thetas)
+            ws = np.mean(ws,axis=1)
+            self.belief = {n:thetas[nidx][0] for nidx,n in enumerate(norm_consideration_list)}
+            self.norm_prop = {n:ws[nidx] for nidx,n in enumerate(norm_consideration_list)}
+            
+            #self.belief = {n:env.opinion_marginals[nidx] for nidx,n in enumerate(env.norm_context_list)}
+            #self.norm_prop = {n:env.norm_contexts_distr[n] for nidx,n in enumerate(env.norm_context_list)}
+        bel_op_all_norms = {n:self.belief[n] if op == 1 else 1-self.belief[n] for nidx,n in enumerate(norm_consideration_list)}
+        exp_n = 0
+        for n,bel_for_n in bel_op_all_norms.items():
+            exp_prob_n_for_bel = self.norm_prop[n]*(bel_for_n*util(self.opinion[n]))/self.payoff_tol
+            exp_n += exp_prob_n_for_bel 
+        if exp_n > 1:
+            if len(norm_consideration_list) > 1:
+                optimal_context_for_player = self.norm_context if util(self.opinion[self.norm_context])>=util(self.opinion[env.moderator_context_signal]) else env.moderator_context_signal
+            else:
+                optimal_context_for_player = self.norm_context
+            self.action_util = util(self.opinion[optimal_context_for_player])
+            self.action_code = 1 if self.opinion[optimal_context_for_player] >= 0.5 else 0
+        else:
+            self.action_code = -1
+            self.action_util = self.payoff_tol
+        self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
+        return self.action
+        
+    def _setup_player(self,r_info):
+        self.appr_val = np.random.beta(self.opinion_alpha, self.opinion_beta)
+        self.shadow_player.appr_val = np.random.beta(self.prior_belief[0], self.prior_belief[1])
+            
+        self.belief = r_info.prior_belief[0], r_info.prior_belief[1]
+        self.belief_alt = r_info.prior_belief_alt[0], r_info.prior_belief_alt[1]
+        
+        if self.appr_val > .5:
+            self.opinion = 'A'
+            self.opinion_val = self.appr_val
+        elif self.appr_val < .5:
+            self.opinion = 'D'
+            self.opinion_val = 1-self.appr_val
+        else:
+            self.opinion = np.random.choice(['A','D'])
+            self.opinion_val = self.appr_val
+        
+        if self.shadow_player.appr_val > .5:
+            self.shadow_player.opinion = 'A'
+            self.shadow_player.opinion_val = self.shadow_player.appr_val
+        elif self.shadow_player.appr_val < .5:
+            self.shadow_player.opinion = 'D'
+            self.shadow_player.opinion_val = 1-self.shadow_player.appr_val
+        else:
+            self.shadow_player.opinion = np.random.choice(['A','D'])
+            self.shadow_player.opinion_val = self.shadow_player.appr_val
+        self.oth_opinion_bel = self.shadow_player.opinion
+        self.shadow_player.oth_opinion_bel = self.shadow_player.opinion
+        '''
+        people with minority opinion having higher minority opinion risk tolerance
+        people with majority opinion having lower majority opinion risk tolerance
+        '''
+        if constants.risk_tol is None:
+            if self.opinion != self.shadow_player.opinion:
+                self.risk_tol = .9*self.opinion_val
+            else:
+                self.risk_tol = .9*self.opinion_val
+        else:
+            self.risk_tol = constants.risk_tol
+        if constants.payoff_tol is not None:
+            self.payoff_tol = constants.payoff_tol
+            
+        
+    
+    
+        
+    def choose_action(self,payoff_dict):
+        #effort_fun = lambda x : 1-x
+        effort_fun = lambda x : entropy(x,1-x)
+        if self.opinion == self.oth_opinion_bel:
+                risk_of_opinion = utils.get_act_risk(payoff_dict, 0, self.opinion)
+                if constants.op_mode == 'payoff_based':
+                    effective_op_val = self.opinion_val - effort_fun(self.opinion_val)
+                    if effective_op_val < self.payoff_tol:
+                        self.action = 'N'
+                    else:
+                        self.action = self.opinion
+                
+                if constants.op_mode == 'risk_based':
+                    if risk_of_opinion > self.risk_tol:
+                        self.action = 'N'
+                    else:
+                        self.action = self.opinion
+        else:
+            pl_not_op = utils.get_oth_opinion(self.opinion)
+            payoff_not_opinion = payoff_dict[(pl_not_op,pl_not_op)][0]
+            payoff_opinion = payoff_dict[(self.opinion,self.opinion)][0]
+            risk_of_opinion = utils.get_act_risk(payoff_dict, 0 , self.opinion)
+            if constants.op_mode == 'payoff_based':
+                effective_op_val = self.opinion_val - effort_fun(self.opinion_val)
+                if effective_op_val < self.payoff_tol:
+                    self.action = 'N'
+                else:
+                    self.action = self.opinion
+            
+            if constants.op_mode == 'risk_based':
+                if risk_of_opinion > self.risk_tol:
+                    self.action = 'N'
+                else:
+                    self.action = self.opinion
+    
+    def choose_action_simplified(self,prior_belief):
+        effort_fun = lambda x : 0.5*entropy([x,1-x])
+        effective_op_val = self.opinion_val - effort_fun(self.opinion_val)
+        
+        bel_op = sum(prior_belief[:2])/sum(prior_belief) if self.opinion == 'D' else sum(prior_belief[2:])/sum(prior_belief)
+        op_selection_ratio = (bel_op*(effective_op_val))/self.payoff_tol
+        if op_selection_ratio > 1:
+            self.action = self.opinion_expanded
+        else:
+            self.action = 'N'
+    
+    def add_regrets(self,act_distribution):
+        other_action = 'N' if self.action != 'N' else self.opinion
+        obs_opinion_support = sum(act_distribution[:2])/sum(act_distribution) if self.opinion == 'D' else sum(act_distribution[2:])/sum(act_distribution)
+        if other_action == 'N':
+            curr_payoff = self.opinion_val*obs_opinion_support
+            self.regret_map = {other_action:max(0,self.payoff_tol-curr_payoff)}
+        else:
+            curr_payoff = self.payoff_tol
+            regret_payoff = obs_opinion_support*self.opinion_val
+            self.regret_map = {other_action:max(0,regret_payoff-curr_payoff)}
+        self.regret_map[self.action[-1]] = 0
+    
+class ModeratorAgent():
+    
+    def __init__(self,moderator_action = None):
+        if moderator_action is not None:
+            self.moderator_action = moderator_action            
+
+class RunInfo():
+    
+    def __init__(self,iter):
+        self.iter = iter
 
 def env(render_mode=None):
     """

@@ -8,15 +8,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import math
+import scipy.linalg
 import scipy.stats as stats
 from scipy.stats import beta
 import itertools
 from Equilibria import CorrelatedEquilibria, PureNashEquilibria
 from collections import Counter
-#import rpy2.robjects as robjects
-#import rpy2.robjects.numpy2ri
-#from rpy2.robjects.packages import importr
+import rpy2.robjects as robjects
+import rpy2.robjects.numpy2ri
+from rpy2.robjects.packages import importr
 import warnings
+from astropy.stats import sigma_clipping
 
 def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
     x = np.linspace(beta.ppf(0.01, a, b),beta.ppf(0.99, a, b), 100)
@@ -162,22 +164,32 @@ def set_box_color(bp, color):
     plt.setp(bp['medians'], color=color)
     
 def correlation_constraints(ref_cor_index,opinion_param_samples):
-    corr_matrix_upp_bound = np.full(shape=(4,4),fill_value=-np.inf) if ref_cor_index[1] is None else np.full(shape=(4,4,2),fill_value=-np.inf)
+    N = opinion_param_samples.shape[0]
+    corr_matrix_upp_bound = np.full(shape=(N,N),fill_value=-np.inf) if ref_cor_index[1] is None else np.full(shape=(N,N,2),fill_value=-np.inf)
     mu_s = opinion_param_samples.tolist()
+    maj_relation_matrix = np.zeros(shape=(N,N))
+    it = np.nditer(maj_relation_matrix, flags=['multi_index'])
+    for x in it:
+        idx = it.multi_index
+        if (opinion_param_samples[idx[0]]-0.5)*(opinion_param_samples[idx[1]]-0.5) < 0:
+            ''' one is in approval and other in diapproval '''
+            maj_relation_matrix[idx[0],idx[1]] = 0
+        else:
+            maj_relation_matrix[idx[0],idx[1]] = 1
+    assert (maj_relation_matrix==maj_relation_matrix.T).all() , 'matrix is not symmetric. Something is wrong'
     psi_i = lambda mu : np.sqrt(mu/(1-mu)) 
-    for i in np.arange(4):
-        for j in np.arange(4):
+    for i in np.arange(N):
+        for j in np.arange(N):
             if i > j:
                 r_ij = [max([-psi_i(mu_s[i])*psi_i(mu_s[j]),-1/(psi_i(mu_s[i])*psi_i(mu_s[j]))]),min([psi_i(mu_s[i])/psi_i(mu_s[j]),psi_i(mu_s[j])/psi_i(mu_s[i])])]
-                #print('r_'+str(i)+','+str(j)+": "+str(r_ij))
                 if ref_cor_index[1] is None:
-                    corr_matrix_upp_bound[i,j] = np.random.uniform(0,r_ij[1]) if j!=ref_cor_index[0] else np.random.uniform(r_ij[0],0)
+                    corr_matrix_upp_bound[i,j] = np.random.uniform(0,r_ij[1]) if maj_relation_matrix[i,j]==1 else np.random.uniform(r_ij[0],0)
                 else:
                     corr_matrix_upp_bound[i,j] = np.array([r_ij[0],r_ij[1]])
             if i==j:
                 corr_matrix_upp_bound[i,j] = 1 if ref_cor_index[1] is None else np.array([1,1])
-    for i in np.arange(4):
-        for j in np.arange(4):
+    for i in np.arange(N):
+        for j in np.arange(N):
             if np.any(corr_matrix_upp_bound[i,j] == -np.inf):
                 corr_matrix_upp_bound[i,j] = corr_matrix_upp_bound[j,i] if ref_cor_index[1] is None else corr_matrix_upp_bound[j,i,:]
     corr_sums = np.sum(corr_matrix_upp_bound,axis=0)
@@ -200,6 +212,53 @@ def plot_gaussian(mu,variance,ax=None,vert_line_at = None):
 
 def list_to_str(l):
     return [str(x) for x in l]
+
+def corr2cov(corr_mat,variance_list):
+    cov_matrix = np.ones(shape=corr_mat.shape)
+    var_matrix = np.zeros(shape=corr_mat.shape)
+    np.fill_diagonal(var_matrix, variance_list)
+    cov_matrix = var_matrix @ corr_mat @ var_matrix
+    return cov_matrix
+
+def generate_n_way_samples_copula(beta_params, corr_matrix):
+    beta_var = [stats.beta(a=beta_params[i][0],b=beta_params[i][1]).var() for i in np.arange(len(beta_params))]
+    N = corr_matrix.shape[0]
+    ''' we need to scale the covariance since the original covariance is with respect to beta distribution'''
+    cov_matrix  = corr2cov(corr_matrix,beta_var)*(10**3)
+    try:
+        mvnorm = stats.multivariate_normal(mean=[0]*N, cov=cov_matrix)
+    except ValueError:
+        print(cov_matrix)
+        ''' Positive semi definite check fail '''
+        ''' https://math.stackexchange.com/questions/332456/how-to-make-a-matrix-positive-semidefinite '''
+        cov_abs = np.absolute(cov_matrix)
+        sum_non_diag = np.sum(cov_abs) - np.trace(cov_abs)
+        min_diag = np.min(np.diagonal(cov_matrix))
+        if min_diag > sum_non_diag:
+            ''' Some other problem, raise'''
+            raise
+        else:
+            _diff = (sum_non_diag-min_diag)+np.finfo(np.float32).eps
+            np.fill_diagonal(cov_matrix, cov_matrix.diagonal() + _diff)
+            if not np.all(np.linalg.eigvals(cov_matrix) > 0):
+                raise
+            mvnorm = stats.multivariate_normal(mean=[0]*N, cov=cov_matrix)
+    x = mvnorm.rvs(100)
+    norm = stats.norm()
+    x_unif = norm.cdf(x)
+    m_list = [stats.beta(a=x[0],b=x[1]) for x in beta_params]
+    x_trans = [m_list[i].ppf(x_unif[:,i]) for i in np.arange(len(m_list))]
+    x_trans = np.asarray(x_trans).T
+    marginals = np.mean(x_trans,axis=0)
+    return x_trans
+    
+def generate_samples_copula(beta_params,ref_cor_index):
+    opinion_param_means = np.array([stats.beta(a=beta_params[i][0],b=beta_params[i][1]).mean() for i in np.arange(len(beta_params))])
+    corr_mat = correlation_constraints(ref_cor_index,opinion_param_means)
+    samples = generate_n_way_samples_copula(beta_params, corr_mat)
+    samples = np.where(samples < 0.5, 0, 1)
+    return samples,corr_mat,None
+    
 
 def generate_samples(op_marginals,ref_cor_index):
     success = False
@@ -397,6 +456,35 @@ def generate_correleted_opinions(marginal_params,correlation_val,size):
     x2_trans = m2.ppf(x_unif[:, 1])
     samples = np.column_stack([x1_trans,x2_trans])
     return samples
+
+def est_beta_from_mu_sigma(mu, sigma):
+    alpha = mu**2 * ((1 - mu) / sigma**2 - 1 / mu)
+    beta = alpha * (1 / mu - 1)
+    return (alpha,beta)
+
+class Gaussian_plateu_distribution():
+    
+    def __init__(self,mu,sigma,w):
+        self.mu = mu
+        self.sigma =sigma
+        self.w = w
+    
+    def pdf(self,x):
+        root_2_pi_sigma = math.sqrt(2*math.pi*self.sigma)
+        h = 1/(1+(self.w/root_2_pi_sigma))   
+        exponent = lambda x,side : math.exp((-1/(2*self.sigma**2))*(x-self.mu+(self.w/2))**2) if side=='l' else math.exp((-1/(2*self.sigma**2))*(x-self.mu-(self.w/2))**2)
+        if x <= self.mu-(self.w/2):
+            return (h/root_2_pi_sigma)*exponent(x,'l')
+        elif x >= self.mu+(self.w/2):
+            return (h/root_2_pi_sigma)*exponent(x,'r')
+        else:
+            return h/root_2_pi_sigma
+'''
+gpd_obj = Gaussian_plateu_distribution(.3,.01,.3)
+plt.plot(np.linspace(0,1,100),[gpd_obj.pdf(x) for x in np.linspace(0,1,100)])
+plt.show()
+'''
+            
 '''
 opinions,corr_mat = generate_samples()
 opinion_marginals = np.sum(opinions,axis=0)/100
