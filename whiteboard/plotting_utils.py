@@ -1,6 +1,12 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
-import matplotlib.patches as mpatches
+#import matplotlib.patches as mpatches
+from pymoo.util.ref_dirs import get_reference_directions
+from pymoo.visualization.scatter import Scatter
+import numpy as np
+
+
+
 def plot_vanilla(data_list, min_len):
 
     sns.set_style("whitegrid", {'axes.grid' : True,
@@ -23,7 +29,7 @@ def plot_vanilla(data_list, min_len):
     lgd=plt.legend(
     frameon=True, fancybox=True, \
     prop={'weight':'bold', 'size':14}, handles=color_patch, loc="best")
-    plt.title('Title', fontsize=14s)
+    plt.title('Title', fontsize=14)
     ax = plt.gca()
     ax.set_xticks([10, 20, 30, 40, 50])
     ax.set_xticklabels([0.5, 1, 1.5, 2.5, 3.0])
@@ -33,3 +39,7 @@ def plot_vanilla(data_list, min_len):
     sns.despine()
     plt.tight_layout()
     plt.show()
+    
+
+
+    

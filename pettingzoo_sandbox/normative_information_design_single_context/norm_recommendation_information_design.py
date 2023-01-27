@@ -237,8 +237,10 @@ class parallel_env(ParallelEnv):
         priors_rescaled, likelihood_rescaled = dict(), dict()
         for x in np.linspace(0,1,100):
             priors_rescaled[x] = beta.pdf(x, self.common_prior[0], self.common_prior[1])
-            _constr_distr = utils.Gaussian_plateu_distribution(x,.01,self.normal_constr_sd)
-            likelihood_rescaled[x] = _constr_distr.pdf(signal_distribution)
+            _constr_distr = utils.Gaussian_plateu_distribution(signal_distribution,.01,self.normal_constr_sd)
+            likelihood_rescaled[x] = _constr_distr.pdf(x)
+            #_constr_distr = utils.Gaussian_plateu_distribution(0,.01,self.normal_constr_sd)
+            #likelihood_rescaled[x] = _constr_distr.pdf(abs(x-signal_distribution))
         priors_rescaled = {k:v/sum(list(priors_rescaled.values())) for k,v in priors_rescaled.items()}
         likelihood_rescaled = {k:v/sum(list(likelihood_rescaled.values())) for k,v in likelihood_rescaled.items()}
         
@@ -357,14 +359,14 @@ if __name__ == "__main__":
     """ ENV SETUP """
     state_evolution,state_evolution_baseline = dict(), dict()
     for batch_num in np.arange(100):
-        env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.6}})
+        env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.55}})
         ''' Check that every norm context has at least one agent '''
         if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
             raise Exception()
         env.reset()
         env.no_print = True
         env.NUM_ITERS = 100
-        env.common_prior = (2.5,1.5)
+        env.common_prior = (4,2)
         env.prior_baseline = env.common_prior
         env.normal_constr_sd = 0.3
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(env.common_prior[0]/sum(env.common_prior),.01,.3)
@@ -392,11 +394,13 @@ if __name__ == "__main__":
                 signal_distr_theta = 0.5
             
             #signal_distr_theta = np.random.uniform()
+            ''' the posterior gets updated inside this '''
             posterior_mean = env.generate_posteriors(signal_distr_theta)
             baseline_bels_mean = env.prior_baseline[0]/sum(env.prior_baseline)
             
-            #print('posterior,baseline',posterior_mean,baseline_bels_mean)
+            ''' act is based on the new posterior acting as prior '''
             actions = {agent.id:agent.act(env,run_type='self-ref',baseline=False) for agent in env.possible_agents}
+            ''' common prior is updated based on the action observations '''
             observations, rewards, terminations, truncations, infos = env.step(actions,i,baseline=False)
             s,a,r = curr_state, signal_distr_theta, rewards
             new_common_prior_mean = env.common_prior[0]/sum(env.common_prior)

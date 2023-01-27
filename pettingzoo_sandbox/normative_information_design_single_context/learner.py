@@ -28,11 +28,11 @@ env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.6}})
 if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
     raise Exception()
 env.reset()
-env.common_prior = (3, 3)
+env.common_prior = (4, 2)
 env.prior_baseline = env.common_prior
-env.normal_constr_sd = 0.4
+env.normal_constr_sd = 0.1
 
-number_of_iterations = 1000
+number_of_iterations = 20000
 env.NUM_ITERS = number_of_iterations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 qn = QNetwork(input_state_size=3)

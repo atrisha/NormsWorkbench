@@ -10,7 +10,7 @@ from gymnasium.spaces import Discrete, Box
 import numpy as np
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
-
+from collections import namedtuple
 import constants
 import utils
 import matplotlib.pyplot as plt
@@ -25,9 +25,10 @@ import re
 from collections import Counter
 from sympy.stats import P, E, variance, Beta, Normal
 from sympy import simplify
-from scipy.stats import beta, norm
+from scipy.stats import beta, norm, dirichlet
 import seaborn as sns
 import pandas as pd
+import math
 
 
 class heterogenous_parallel_env(ParallelEnv):
@@ -59,6 +60,7 @@ class heterogenous_parallel_env(ParallelEnv):
         #self.norm_contexts_distr = {x:0.25 for x in self.norm_context_list}
         self.true_state = {k:beta(a=v[0],b=v[1]).mean() for k,v in self.true_state_distr_params.items()}     
         self.norm_contexts_distr = {k:v/np.sum(list(self.norm_contexts_distr.values())) for k,v in self.norm_contexts_distr.items()}
+        self.common_prior_means = self.true_state_distr_params
         ''' Sample the player opinions based on their private contexts sampled from the context distribution '''
         try_ct = 0
         if not hasattr(self, 'players_private_contexts'):
@@ -72,7 +74,7 @@ class heterogenous_parallel_env(ParallelEnv):
         for idx,op in enumerate(players_private_contexts): self.possible_agents[idx].norm_context = players_private_contexts[idx]
         
         self.true_state_thetas = [self.true_state[n] for n in self.norm_context_list]
-        self.opinions,self.corr_mat,self.mutual_info_mat = utils.generate_samples_copula([self.true_state_distr_params[n] for n in self.norm_context_list] ,(0,None))
+        self.opinions,self.corr_mat,self.mutual_info_mat = utils.generate_samples_copula([self.true_state_distr_params[n] for n in self.norm_context_list] ,(0,None), n_samples=self.num_players)
         self.corr_mat_ref_sum = np.sum(self.corr_mat[0,:])-1
         self.constructed_corr_mat = self.construct_correlation_from_opinions()
         self.constructed_corr_mat_ref_sum = np.sum(self.constructed_corr_mat[0,:])-1
@@ -92,6 +94,11 @@ class heterogenous_parallel_env(ParallelEnv):
         self.opinion_marginals = [np.mean(self.opinion_marginals[k]) for k in self.norm_context_list]   
         ''' reconcile the true state based on the generated sampled '''
         self.true_state = {n:self.opinion_marginals[idx] for idx,n in enumerate(self.norm_context_list)}
+        
+        weight_samples = utils.runif_in_simplex(10000,4)
+        theta_samples = np.random.uniform(size=(10000,4))
+        self.domain_samples =  np.hstack((weight_samples,theta_samples))
+        
         
         
     def construct_correlation_from_opinions(self):
@@ -222,47 +229,68 @@ class heterogenous_parallel_env(ParallelEnv):
                 b_prime =  self.update_rate-a_prime
                 for norm_context in self.norm_context_list:
                     self.prior_baseline[norm_context] = (self.prior_baseline[norm_context][0]+a_prime, self.prior_baseline[norm_context][1]+b_prime)
+                    
+    def _posterior_calc(self,all_samples,steward_distr):
+        if all_samples is None:
+            self.weight_samples = utils.runif_in_simplex(10000,4)
+            self.theta_samples = np.random.uniform(size=(10000,4))
+            self.all_samples = np.hstack((self.weight_samples,self.theta_samples))
+        constr_f = lambda x,signal_distr : utils.Gaussian_plateu_distribution(0,0.1,self.normal_constr_sd).pdf(abs(x-signal_distr))
+        def calc_pos(_state_vec):
+            return constr_f(_state_vec[:4]@_state_vec[4:].T,steward_distr.w@steward_distr.t.T)*(utils.dirichlet_pdf(x=_state_vec[:4], alpha = [self.env_common_prior_w[n] for n in self.norm_context_list])*math.prod([utils.beta_pdf(_state_vec[nidx], self.common_prior[n][0], self.common_prior[n][1]) for nidx,n in enumerate(self.norm_context_list)]))
+        posteriors = np.apply_along_axis(calc_pos, 1, self.all_samples)
+        return posteriors
     
     def generate_posteriors(self,signal_distribution):
         '''
-            This method updates the posterior for the population (posterior over the rate of approval) based on the signal dristribution.
+            This method updates the posterior for the population (posterior over the weights and rates) based on the signal dristribution (weights and rates).
             Since signal distribution is a Bernoulli, we can get individual realizations of 0 and 1 separately, and then take the expectation.
         '''
-        def _post(x,priors_rescaled,likelihood_rescaled):
-            prior_x = priors_rescaled[x]
-            
-            ''' This evaluates the likelohood as conditioned on the state value x
-                Find prob of signal distr. (this connects to the 'state', i.e., have state information)
-                Then calc liklihood of the signal realization
-            '''
-            signal_param_prob = likelihood_rescaled[x]
-            lik = lambda x: signal_param_prob*signal_distribution if x == 1 else signal_param_prob*(1-signal_distribution)
-            post = (prior_x*lik(1),prior_x*lik(0))
-            return post
-        all_posteriors = []
+        exp_signal_appr_rate = signal_distribution.w@signal_distribution.t.T
+        posteriors_part1 = self._posterior_calc(self.all_samples if hasattr(self, 'all_samples') else None, signal_distribution)
+        ''' appr _signal'''
+        appr_post = posteriors_part1 * exp_signal_appr_rate
+        appr_post_marginal = np.mean(appr_post)*1 # Multiplied by 1 just to remind that the volume of the space is still 1 since everything lies in [0,1]
+        appr_post_by_marginal = appr_post/appr_post_marginal
+        ''' disappr signal '''
+        disappr_post = posteriors_part1 * (1-exp_signal_appr_rate)
+        disappr_post_marginal = np.mean(disappr_post)*1 # Multiplied by 1 just to remind that the volume of the space is still 1 since everything lies in [0,1]
+        disappr_post_by_marginal = disappr_post/disappr_post_marginal
+        ''' approvals and diapproval signals are going to come based on the signal distribution proportion due to commitment constraint '''
+        ''' therefore, calculate the expectations of the posterior function '''
+        exp_posterior_full_distr_samples = exp_signal_appr_rate*appr_post_by_marginal + (1-exp_signal_appr_rate)*disappr_post_by_marginal
+        exp_posterior_full_distr_samples = np.reshape(exp_posterior_full_distr_samples,newshape=(exp_posterior_full_distr_samples.shape[0],1))
         
-        priors_rescaled, likelihood_rescaled = dict(), dict()
-        for x in np.linspace(0,1,100):
-            priors_rescaled[x] = beta.pdf(x, self.common_prior[0], self.common_prior[1])
-            _constr_distr = utils.Gaussian_plateu_distribution(x,.01,self.normal_constr_sd)
-            likelihood_rescaled[x] = _constr_distr.pdf(signal_distribution)
-        priors_rescaled = {k:v/sum(list(priors_rescaled.values())) for k,v in priors_rescaled.items()}
-        likelihood_rescaled = {k:v/sum(list(likelihood_rescaled.values())) for k,v in likelihood_rescaled.items()}
+        ''' the posterior update will be different for different models of behaviour.'''
+        ''' this is the common expected posterior approval rate, which can be used as a descriptive belief'''
+        env.common_posterior_as_single_expectation = np.multiply(np.multiply(env.all_samples[:,:4],env.all_samples[:,4:]),exp_posterior_full_distr_samples)
+        checksum = np.sum(exp_posterior_full_distr_samples)
+        checkmax = np.max(exp_posterior_full_distr_samples)
+        exp_posterior_full_distr_samples = exp_posterior_full_distr_samples/checksum
+        checksum = np.sum(exp_posterior_full_distr_samples)
+        checkmax = np.max(exp_posterior_full_distr_samples)
         
-        for x in np.linspace(0,1,100):
-            posteriors = _post(x,priors_rescaled,likelihood_rescaled)
-            ''' Since the signal realization will be based on the signal distribution, we can take the expectation of the posterior w.r.t each realization.'''
-            expected_posterior_for_state_x = (signal_distribution*posteriors[0]) + ((1-signal_distribution)*posteriors[1])
-            all_posteriors.append(expected_posterior_for_state_x)
-        all_posteriors = [x/np.sum(all_posteriors) for x in all_posteriors]
+        ''' now the hard part. updating the posterior for the full distribution.'''
+        ''' the action needs two things separately:
+            1. the weight distribution
+            2. the correlation matrix for the joint distribution of thetas.
         '''
-        plt.plot(np.linspace(0,1,100),all_posteriors)
-        plt.xlim(0,1)
-        plt.show()
-        '''
-        exp_x = np.sum([x*prob_x for x,prob_x in zip(np.linspace(0,1,100),all_posteriors)])
-        self.common_posterior = exp_x
-        return exp_x
+        exp_weight_distr = np.sum(np.multiply(env.all_samples[:,:4],exp_posterior_full_distr_samples), axis=0)
+        exp_theta_distr_mean = np.sum(np.multiply(env.all_samples[:,4:],exp_posterior_full_distr_samples), axis=0)
+        cov_matrix, sd_matrix = np.zeros(shape=(len(env.norm_context_list),len(env.norm_context_list))), np.zeros(shape=(len(env.norm_context_list),1))
+        for i in np.arange(sd_matrix.shape[0]):
+            sd_matrix[i] = np.sum(np.sqrt(np.multiply(np.square(env.all_samples[:,i]-exp_theta_distr_mean[i]),exp_posterior_full_distr_samples)), axis=0)
+        return exp_posterior_full_distr_samples
+    
+    
+    
+    @property
+    def context_weights(self):
+        return np.array([self.norm_contexts_distr[n] for n in self.norm_context_list])
+    
+    @property
+    def common_prior_means_asarray(self):
+        return np.array([beta(a=self.common_prior_means[n][0], b=self.common_prior_means[n][1]).mean() for n in self.norm_context_list])
         
 class Player():
     
@@ -288,8 +316,34 @@ class Player():
         
     
     def act_context_misinterpretation(self,env,baseline,norm_context):
-        f=1
-        for pl    
+        def _util(desc_bel_op,corr_val_ctx):
+            '''Maps from -1,1 to 0,1'''
+            scaled_u_corr = lambda u : (u+1)/2 
+            return desc_bel_op*scaled_u_corr(corr_val_ctx)
+        if norm_context == 'n3':
+            f=1
+        u_bar = env.security_util
+        desc_bel = env.context_weights @ env.common_prior_means_asarray.T
+        desc_bel_op = desc_bel if self.opinion[self.norm_context] >= 0.5 else 1-desc_bel
+        self_norm_index = env.norm_context_list.index(self.norm_context)
+        expected_corr = env.context_weights @ env.corr_mat[self_norm_index,:].T
+        if desc_bel_op > 0.6 and expected_corr > 0:
+            f=1
+        if not baseline:
+            raise NotImplementedError('Non baseline behaviour not implemented')
+        else:
+            assert norm_context==self.norm_context, 'norm context check failed'
+            util_val = _util(desc_bel_op,expected_corr)
+            if util_val < u_bar:
+                self.action_code_baseline = -1
+                self.action_util_baseline = u_bar
+            else:
+                self.action_code_baseline = 1 if self.opinion[self.norm_context] >= 0.5 else 0
+                self.action_util_baseline = desc_bel_op*expected_corr
+                    
+            
+            self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context])
+        
         
     def act_self_ref(self, env,baseline,norm_context):
         ''' This is a petting zoo framework method '''
@@ -357,9 +411,12 @@ class Player():
 if __name__ == "__main__":
     """ ENV SETUP """
     state_evolution_baseline = dict()
-    for batch_num in np.arange(100):
+    summary_statistic = {'participation':{},'community_correlation':{},'mean_theta':{}}
+    for batch_num in np.arange(100
+                               ):
         attr_dict = {'norm_contexts_distr': {'n1':0.3,'n2':0.2,'n3':0.1,'n4':0.4},
-                    'true_state_distr_params':{'n1':(5,3),'n2':(3.7,3),'n3':(2,3),'n4':(9,2)}}
+                    'true_state_distr_params':{'n1':(5,3),'n2':(3.7,3),'n3':(2,4),'n4':(9,2)}
+                    }
         env = heterogenous_parallel_env(render_mode='human',attr_dict=attr_dict)
         ''' Check that every norm context has at least one agent '''
         if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
@@ -369,16 +426,29 @@ if __name__ == "__main__":
         env.NUM_ITERS = 100
         common_prior_var = 0.1
         env.common_prior = {k:utils.est_beta_from_mu_sigma(mu=v+np.random.normal(scale=common_prior_var), sigma=common_prior_var) for k,v in env.true_state.items()}
+        env.env_common_prior_w = {k:int(v*10) for k,v in attr_dict['norm_contexts_distr'].items()}
         env.prior_baseline = {k:v for k,v in env.common_prior.items()}
         env.normal_constr_sd = 0.3
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(env.common_prior[0]/sum(env.common_prior),.01,.3)
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(.3,.01,.3)
         dataset = []
-    
+        for k,v in summary_statistic.items():
+            if len(v) == 0:
+                summary_statistic[k] = {n:[] for n in env.norm_context_list}
         
+        signal_distribution = namedtuple('signal_distribution','w t')
+        steward_signal_distribution = signal_distribution(np.array([0.2,0.3,0.4,0.1]), np.array([0.22,0.57,0.2,0.88]))
+        exp_posterior_full_distr_samples = env.generate_posteriors(steward_signal_distribution)
         for i in np.arange(100):
             print(batch_num,i)
             actions = dict()
+            for norm_context in env.norm_context_list:
+                #curr_state = env.common_prior[norm_context][0]/sum(env.common_prior[norm_context])
+                #baseline_bels_mean = env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context])
+                #actions.update({agent.id:agent.act_context_misinterpretation(env,baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+                actions.update({agent.id:agent.act(env,run_type='self-ref',baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+            env.step(actions,i,baseline=True)
+            
             for norm_context in env.norm_context_list:
                 if norm_context not in state_evolution_baseline:
                     state_evolution_baseline[norm_context] = dict()
@@ -386,12 +456,19 @@ if __name__ == "__main__":
                     state_evolution_baseline[norm_context][i] = []
                 state_evolution_baseline[norm_context][i].append(env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context]))
                 
-                curr_state = env.common_prior[norm_context][0]/sum(env.common_prior[norm_context])
-                baseline_bels_mean = env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context])
-                actions.update({agent.id:agent.act(env,run_type='self-ref',baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
-            env.step(actions,i,baseline=True)
+            for nidx,n in enumerate(env.norm_context_list):
+                part = len([ag for ag in env.possible_agents if ag.norm_context==n and ag.action[0]!=-1])/len([ag for ag in env.possible_agents if ag.norm_context==n])
+                summary_statistic['participation'][n].append(part)
+                corr_val = np.sum(env.corr_mat[nidx,:])
+                summary_statistic['community_correlation'][n].append(corr_val)
+                mean_theta = env.true_state[n]
+                summary_statistic['mean_theta'][n].append(mean_theta)
             
         #env.common_prior = (np.random.randint(low=1,high=4),np.random.randint(low=1,high=4))
+    for k,v in summary_statistic.items():
+        print('------',k,'-------')
+        for n,val in v.items():
+            print(n,':',np.mean(val) if len(val)>0 else 'None')
     cols = ['time', 'belief','norm']
     lst = []
     for norm,norm_data in state_evolution_baseline.items():
@@ -399,7 +476,7 @@ if __name__ == "__main__":
             for _v in v:
                 lst.append([k,_v,norm])
     df = pd.DataFrame(lst, columns=cols)
-    
+    df['norm'] = df['norm'].map({k:k+' ('+str(attr_dict['norm_contexts_distr'][k])+','+' ('+str(beta.mean(a=attr_dict['true_state_distr_params'][k][0],b=attr_dict['true_state_distr_params'][k][1]))+')' for k in env.norm_context_list})
     sns.set_theme(style="darkgrid")
     '''
     fig = plt.figure(figsize=(12, 12))

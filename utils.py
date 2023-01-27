@@ -19,6 +19,10 @@ import rpy2.robjects.numpy2ri
 from rpy2.robjects.packages import importr
 import warnings
 from astropy.stats import sigma_clipping
+from pymoo.util.ref_dirs import get_reference_directions
+import functools
+import operator
+import scipy.special
 
 def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
     x = np.linspace(beta.ppf(0.01, a, b),beta.ppf(0.99, a, b), 100)
@@ -220,7 +224,7 @@ def corr2cov(corr_mat,variance_list):
     cov_matrix = var_matrix @ corr_mat @ var_matrix
     return cov_matrix
 
-def generate_n_way_samples_copula(beta_params, corr_matrix):
+def generate_n_way_samples_copula(beta_params, corr_matrix, n_samples):
     beta_var = [stats.beta(a=beta_params[i][0],b=beta_params[i][1]).var() for i in np.arange(len(beta_params))]
     N = corr_matrix.shape[0]
     ''' we need to scale the covariance since the original covariance is with respect to beta distribution'''
@@ -243,7 +247,7 @@ def generate_n_way_samples_copula(beta_params, corr_matrix):
             if not np.all(np.linalg.eigvals(cov_matrix) > 0):
                 raise
             mvnorm = stats.multivariate_normal(mean=[0]*N, cov=cov_matrix)
-    x = mvnorm.rvs(100)
+    x = mvnorm.rvs(n_samples)
     norm = stats.norm()
     x_unif = norm.cdf(x)
     m_list = [stats.beta(a=x[0],b=x[1]) for x in beta_params]
@@ -252,10 +256,10 @@ def generate_n_way_samples_copula(beta_params, corr_matrix):
     marginals = np.mean(x_trans,axis=0)
     return x_trans
     
-def generate_samples_copula(beta_params,ref_cor_index):
+def generate_samples_copula(beta_params,ref_cor_index, n_samples):
     opinion_param_means = np.array([stats.beta(a=beta_params[i][0],b=beta_params[i][1]).mean() for i in np.arange(len(beta_params))])
     corr_mat = correlation_constraints(ref_cor_index,opinion_param_means)
-    samples = generate_n_way_samples_copula(beta_params, corr_mat)
+    samples = generate_n_way_samples_copula(beta_params, corr_mat, n_samples)
     samples = np.where(samples < 0.5, 0, 1)
     return samples,corr_mat,None
     
@@ -479,6 +483,35 @@ class Gaussian_plateu_distribution():
             return (h/root_2_pi_sigma)*exponent(x,'r')
         else:
             return h/root_2_pi_sigma
+        
+def generate_simplex_points(n_samples,n_dim):
+    ''' https://www.egr.msu.edu/~kdeb/papers/c2020002.pdf '''
+    ref_dirs = get_reference_directions("energy", n_dim, n_samples, seed=1)
+    #Scatter().add(ref_dirs).show()
+    return ref_dirs
+
+def generate_unit_lattice(n_samples,n_dim):
+    ''' https://stackoverflow.com/questions/12864445/how-to-convert-the-output-of-meshgrid-to-the-corresponding-array-of-points '''
+    mesh_data = np.meshgrid(*tuple([np.linspace(0,1,n_samples) for n in np.arange(n_dim)]))
+    lattice_points = np.vstack(map(np.ravel, mesh_data)).T
+    #plt.plot(mesh_data[0], mesh_data[1], marker='o', color='k', linestyle='none')
+    #plt.show()
+    return lattice_points
+
+def beta_pdf(x,a,b):
+    return ((x**(a-1))*((1-x)**(b-1)))/scipy.special.beta(a,b)
+
+def dirichlet_pdf(x, alpha):
+    return (math.gamma(sum(alpha)) / 
+          functools.reduce(operator.mul, [math.gamma(a) for a in alpha]) *
+          functools.reduce(operator.mul, [x[i]**(alpha[i]-1.0) for i in range(len(alpha))]))
+  
+def runif_in_simplex(n_samples,n_dim):
+    ''' Return uniformly random vector in the n-simplex '''
+
+    k = np.random.exponential(scale=1.0, size=(n_samples,n_dim))
+    return k / np.sum(k,axis=1)[:,None]
+
 '''
 gpd_obj = Gaussian_plateu_distribution(.3,.01,.3)
 plt.plot(np.linspace(0,1,100),[gpd_obj.pdf(x) for x in np.linspace(0,1,100)])
