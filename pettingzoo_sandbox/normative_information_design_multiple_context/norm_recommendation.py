@@ -45,7 +45,7 @@ class heterogenous_parallel_env(ParallelEnv):
         self.num_players = 100
         self.update_rate = 10
         self.norm_context_list = ['n1','n2','n3','n4']
-        self.security_util = 0.3
+        self.security_util = 0.2
         self.possible_agents = [Player(r) for r in range(self.num_players)]
         self.results_map = dict()
         self.observations = None
@@ -204,12 +204,19 @@ class heterogenous_parallel_env(ParallelEnv):
             num_appr = len([ag.action[0] for ag in self.agents if ag.action[0]==1 and ag.action[0]!=-1])
             num_disappr = len([ag.action[0] for ag in self.agents if ag.action[0]==0 and ag.action[0]!=-1])
             if num_observation > 0:
-                theta_prime_rate = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
-                a_prime = theta_prime_rate*self.update_rate
-                b_prime =  self.update_rate-a_prime
-                self.common_prior = (self.common_prior[0]+a_prime, self.common_prior[1]+b_prime)
+                for nidx,n in enumerate(self.norm_context_list):
+                    obs_op_vals = [ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n]
+                    theta_prime_rate = np.mean(obs_op_vals) if len(obs_op_vals) > 0 else None
+                    obs_weight = len([ag.action[1] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n])/num_observation
+                    if theta_prime_rate is not None:
+                        a_prime = theta_prime_rate*self.update_rate
+                        b_prime =  self.update_rate-a_prime
+                        self.common_prior[n] = (self.common_prior[n][0]+a_prime, self.common_prior[n][1]+b_prime)
+                    self.common_prior_w[n] = self.common_prior_w[n]+(obs_weight*self.update_rate)
             
             observations = self.common_prior
+            ''' now update the weights '''
+            
             # typically there won't be any information in the infos, but there must
             # still be an entry for each agent
             infos = {agent.id: {} for agent in self.agents}
@@ -224,11 +231,16 @@ class heterogenous_parallel_env(ParallelEnv):
             num_appr = len([ag.action[0] for ag in self.agents if ag.action[0]==1 and ag.action[0]!=-1])
             num_disappr = len([ag.action[0] for ag in self.agents if ag.action[0]==0 and ag.action[0]!=-1])
             if num_observation > 0:
-                theta_prime_rate = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
-                a_prime = theta_prime_rate*self.update_rate
-                b_prime =  self.update_rate-a_prime
-                for norm_context in self.norm_context_list:
-                    self.prior_baseline[norm_context] = (self.prior_baseline[norm_context][0]+a_prime, self.prior_baseline[norm_context][1]+b_prime)
+                for nidx,n in enumerate(self.norm_context_list):
+                    obs_op_vals = [ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n]
+                    theta_prime_rate = np.mean(obs_op_vals) if len(obs_op_vals) > 0 else None
+                    obs_weight = len([ag.action[1] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n])/num_observation
+                    if theta_prime_rate is not None:
+                        a_prime = theta_prime_rate*self.update_rate
+                        b_prime =  self.update_rate-a_prime
+                        self.prior_baseline[n] = (self.prior_baseline[n][0]+a_prime, self.prior_baseline[n][1]+b_prime)
+                    self.prior_baseline_w[n] = self.prior_baseline_w[n]+(obs_weight*self.update_rate)
+                    
                     
     def _posterior_calc(self,all_samples,steward_distr):
         if all_samples is None:
@@ -237,7 +249,7 @@ class heterogenous_parallel_env(ParallelEnv):
             self.all_samples = np.hstack((self.weight_samples,self.theta_samples))
         constr_f = lambda x,signal_distr : utils.Gaussian_plateu_distribution(0,0.1,self.normal_constr_sd).pdf(abs(x-signal_distr))
         def calc_pos(_state_vec):
-            return constr_f(_state_vec[:4]@_state_vec[4:].T,steward_distr.w@steward_distr.t.T)*(utils.dirichlet_pdf(x=_state_vec[:4], alpha = [self.env_common_prior_w[n] for n in self.norm_context_list])*math.prod([utils.beta_pdf(_state_vec[nidx], self.common_prior[n][0], self.common_prior[n][1]) for nidx,n in enumerate(self.norm_context_list)]))
+            return constr_f(_state_vec[:4]@_state_vec[4:].T,steward_distr.w@steward_distr.t.T)*(utils.dirichlet_pdf(x=_state_vec[:4], alpha = [self.common_prior_w[n] for n in self.norm_context_list])*math.prod([utils.beta_pdf(_state_vec[nidx], self.common_prior[n][0], self.common_prior[n][1]) for nidx,n in enumerate(self.norm_context_list)]))
         posteriors = np.apply_along_axis(calc_pos, 1, self.all_samples)
         return posteriors
     
@@ -250,11 +262,11 @@ class heterogenous_parallel_env(ParallelEnv):
         posteriors_part1 = self._posterior_calc(self.all_samples if hasattr(self, 'all_samples') else None, signal_distribution)
         ''' appr _signal'''
         appr_post = posteriors_part1 * exp_signal_appr_rate
-        appr_post_marginal = np.mean(appr_post)*1 # Multiplied by 1 just to remind that the volume of the space is still 1 since everything lies in [0,1]
+        appr_post_marginal = np.mean(appr_post)*(1/math.factorial(len(self.norm_context_list))) # Multiplied by 1/n! for the volume of the simples and everything else lies in [0,1]
         appr_post_by_marginal = appr_post/appr_post_marginal
         ''' disappr signal '''
         disappr_post = posteriors_part1 * (1-exp_signal_appr_rate)
-        disappr_post_marginal = np.mean(disappr_post)*1 # Multiplied by 1 just to remind that the volume of the space is still 1 since everything lies in [0,1]
+        disappr_post_marginal = np.mean(disappr_post)*(1/math.factorial(len(self.norm_context_list))) # Multiplied by 1 just to remind that the volume of the space is still 1 since everything lies in [0,1]
         disappr_post_by_marginal = disappr_post/disappr_post_marginal
         ''' approvals and diapproval signals are going to come based on the signal distribution proportion due to commitment constraint '''
         ''' therefore, calculate the expectations of the posterior function '''
@@ -263,34 +275,65 @@ class heterogenous_parallel_env(ParallelEnv):
         
         ''' the posterior update will be different for different models of behaviour.'''
         ''' this is the common expected posterior approval rate, which can be used as a descriptive belief'''
-        env.common_posterior_as_single_expectation = np.multiply(np.multiply(env.all_samples[:,:4],env.all_samples[:,4:]),exp_posterior_full_distr_samples)
         checksum = np.sum(exp_posterior_full_distr_samples)
-        checkmax = np.max(exp_posterior_full_distr_samples)
         exp_posterior_full_distr_samples = exp_posterior_full_distr_samples/checksum
-        checksum = np.sum(exp_posterior_full_distr_samples)
-        checkmax = np.max(exp_posterior_full_distr_samples)
+        ''' just for better readability E[\sigma (w_i.\theta_i)] '''
+        x1 = np.multiply(env.all_samples[:,:4],env.all_samples[:,4:])
+        x2 = np.sum(x1, axis=1)
+        x3 = np.multiply(np.reshape(x2,newshape=(x2.shape[0],1)),exp_posterior_full_distr_samples)
+        self.common_posterior_as_single_expectation = np.sum(x3)
+        self.exp_weight_distr_posterior = np.sum(np.multiply(env.all_samples[:,:4],exp_posterior_full_distr_samples), axis=0)
+        self.exp_theta_distr_mean = np.sum(np.multiply(env.all_samples[:,4:],exp_posterior_full_distr_samples), axis=0)
+        self.exp_weight_distr_posterior = {n:self.exp_weight_distr_posterior[nidx] for nidx,n in enumerate(self.norm_context_list)}
+        self.exp_theta_distr_mean = {n:self.exp_theta_distr_mean[nidx] for nidx,n in enumerate(self.norm_context_list)}
         
+        x1, x2, x3 = None, None, None
         ''' now the hard part. updating the posterior for the full distribution.'''
         ''' the action needs two things separately:
             1. the weight distribution
             2. the correlation matrix for the joint distribution of thetas.
         '''
+        '''
         exp_weight_distr = np.sum(np.multiply(env.all_samples[:,:4],exp_posterior_full_distr_samples), axis=0)
         exp_theta_distr_mean = np.sum(np.multiply(env.all_samples[:,4:],exp_posterior_full_distr_samples), axis=0)
         cov_matrix, sd_matrix = np.zeros(shape=(len(env.norm_context_list),len(env.norm_context_list))), np.zeros(shape=(len(env.norm_context_list),1))
         for i in np.arange(sd_matrix.shape[0]):
-            sd_matrix[i] = np.sum(np.sqrt(np.multiply(np.square(env.all_samples[:,i]-exp_theta_distr_mean[i]),exp_posterior_full_distr_samples)), axis=0)
+            x1 = env.all_samples[:,i]-exp_theta_distr_mean[i]
+            x2 = np.square(x1)
+            x3 = np.multiply(np.reshape(x2,newshape=(x2.shape[0],1)),exp_posterior_full_distr_samples)
+            sd_matrix[i] = np.sum(np.sqrt(x3), axis=0)
+        with np.nditer(cov_matrix, flags=['multi_index']) as it:
+            for x in it:
+                i,j = it.multi_index
+                x1 = env.all_samples[:,i]-exp_theta_distr_mean[i]
+                x2 = env.all_samples[:,j]-exp_theta_distr_mean[j]
+                x3 = np.multiply(np.reshape(x1,newshape=(x1.shape[0],1)), np.reshape(x2,newshape=(x2.shape[0],1)))
+                x3 = np.multiply(np.reshape(x3,newshape=(x3.shape[0],1)),exp_posterior_full_distr_samples)
+                cov_matrix[i,j] = np.sum(x3, axis=0)
+        corr_matrix = np.empty_like(cov_matrix)
+        with np.nditer(corr_matrix, flags=['multi_index']) as it:
+            for x in it:  
+                i,j = it.multi_index
+                corr_matrix[i,j] = cov_matrix[i,j]/(sd_matrix[i]*sd_matrix[j])
+        x1, x2, x3 = None, None, None      
+        ''' 
+        ''' let it be, assuming the correlation matrix stays constant (because  it is more reasonable as correlation gets lost very fast with posterior updates)'''
+        ''' so we just need the new expected weights that '''      
         return exp_posterior_full_distr_samples
     
     
     
     @property
     def context_weights(self):
-        return np.array([self.norm_contexts_distr[n] for n in self.norm_context_list])
+        return np.array([self.common_prior_w[n] for n in self.norm_context_list])
+    
+    @property
+    def context_weights_baseline(self):
+        return np.array([self.prior_baseline_w[n] for n in self.norm_context_list])
     
     @property
     def common_prior_means_asarray(self):
-        return np.array([beta(a=self.common_prior_means[n][0], b=self.common_prior_means[n][1]).mean() for n in self.norm_context_list])
+        return np.array([beta(a=self.common_prior[n][0], b=self.common_prior[n][1]).mean() for n in self.norm_context_list])
         
 class Player():
     
@@ -323,15 +366,29 @@ class Player():
         if norm_context == 'n3':
             f=1
         u_bar = env.security_util
-        desc_bel = env.context_weights @ env.common_prior_means_asarray.T
-        desc_bel_op = desc_bel if self.opinion[self.norm_context] >= 0.5 else 1-desc_bel
-        self_norm_index = env.norm_context_list.index(self.norm_context)
-        expected_corr = env.context_weights @ env.corr_mat[self_norm_index,:].T
-        if desc_bel_op > 0.6 and expected_corr > 0:
-            f=1
         if not baseline:
-            raise NotImplementedError('Non baseline behaviour not implemented')
+            if norm_context=='n3':
+                f=1
+            assert norm_context==self.norm_context, 'norm context check failed'
+            desc_bel = env.common_posterior_as_single_expectation
+            desc_bel_op = desc_bel if self.opinion[self.norm_context] >= 0.5 else 1-desc_bel
+            self_norm_index = env.norm_context_list.index(self.norm_context)
+            expected_corr = np.array([env.exp_weight_distr_posterior[n] for n in env.norm_context_list]) @ env.corr_mat[self_norm_index,:].T
+            util_val = _util(desc_bel_op,expected_corr)
+            if util_val < u_bar:
+                self.action_code_baseline = -1
+                self.action_util_baseline = u_bar
+            else:
+                self.action_code_baseline = 1 if self.opinion[self.norm_context] >= 0.5 else 0
+                self.action_util_baseline = desc_bel_op*expected_corr
+                    
+            
+            self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context])
         else:
+            desc_bel = env.context_weights_baseline @ env.common_prior_means_asarray.T
+            desc_bel_op = desc_bel if self.opinion[self.norm_context] >= 0.5 else 1-desc_bel
+            self_norm_index = env.norm_context_list.index(self.norm_context)
+            expected_corr = env.context_weights_baseline @ env.corr_mat[self_norm_index,:].T
             assert norm_context==self.norm_context, 'norm context check failed'
             util_val = _util(desc_bel_op,expected_corr)
             if util_val < u_bar:
@@ -357,30 +414,29 @@ class Player():
         op = self.opinion[self.norm_context]
         
         if not baseline:
-            ''' The Bayesian Nash Eq action thresholds. '''
-            disappr_bar = 1 - (u_bar/(1-env.common_posterior))
-            appr_bar = u_bar/env.common_posterior
+            assert norm_context==self.norm_context, 'norm context check failed'
+            theta_posterior = env.common_posterior_as_single_expectation
+            disappr_bar_posterior = 1 - (u_bar/(1-theta_posterior))
+            appr_bar_posterior = u_bar/theta_posterior
             
             if op >= 0.5:
-                if op < appr_bar:
+                if op < appr_bar_posterior:
                     self.action_code = -1
                     self.action_util = u_bar
                 else:
                     self.action_code = 1
                     self.action_util = util(op)
             else:
-                if op > disappr_bar:
+                if op > disappr_bar_posterior:
                     self.action_code = -1
                     self.action_util = u_bar
                 else:
                     self.action_code = 0
                     self.action_util = util(op)
-                    
-            
             self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
         else:
             assert norm_context==self.norm_context, 'norm context check failed'
-            theta_baseline = env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context])
+            theta_baseline = env.context_weights_baseline @ env.prior_baseline.T
             disappr_bar_baseline = 1 - (u_bar/(1-theta_baseline))
             appr_bar_baseline = u_bar/theta_baseline
             
@@ -398,8 +454,6 @@ class Player():
                 else:
                     self.action_code_baseline = 0
                     self.action_util_baseline = util(op)
-                    
-            
             self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context])
         
         return self.action
@@ -410,10 +464,10 @@ class Player():
 
 if __name__ == "__main__":
     """ ENV SETUP """
-    state_evolution_baseline = dict()
-    summary_statistic = {'participation':{},'community_correlation':{},'mean_theta':{}}
-    for batch_num in np.arange(100
-                               ):
+    state_evolution_baseline, state_evolution = dict(), dict()
+    summary_statistic_baseline = {'participation':{},'community_correlation':{},'mean_theta':{}}
+    summary_statistic = {k:v for k,v in summary_statistic_baseline.items()}
+    for batch_num in np.arange(100):
         attr_dict = {'norm_contexts_distr': {'n1':0.3,'n2':0.2,'n3':0.1,'n4':0.4},
                     'true_state_distr_params':{'n1':(5,3),'n2':(3.7,3),'n3':(2,4),'n4':(9,2)}
                     }
@@ -426,57 +480,90 @@ if __name__ == "__main__":
         env.NUM_ITERS = 100
         common_prior_var = 0.1
         env.common_prior = {k:utils.est_beta_from_mu_sigma(mu=v+np.random.normal(scale=common_prior_var), sigma=common_prior_var) for k,v in env.true_state.items()}
-        env.env_common_prior_w = {k:int(v*10) for k,v in attr_dict['norm_contexts_distr'].items()}
+        env.common_prior_w = {k:int(v*10) for k,v in attr_dict['norm_contexts_distr'].items()}
         env.prior_baseline = {k:v for k,v in env.common_prior.items()}
+        env.prior_baseline_w = {k:int(v*10) for k,v in attr_dict['norm_contexts_distr'].items()}
         env.normal_constr_sd = 0.3
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(env.common_prior[0]/sum(env.common_prior),.01,.3)
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(.3,.01,.3)
         dataset = []
+        for k,v in summary_statistic_baseline.items():
+            if len(v) == 0:
+                summary_statistic_baseline[k] = {n:[] for n in env.norm_context_list}
         for k,v in summary_statistic.items():
             if len(v) == 0:
                 summary_statistic[k] = {n:[] for n in env.norm_context_list}
         
-        signal_distribution = namedtuple('signal_distribution','w t')
-        steward_signal_distribution = signal_distribution(np.array([0.2,0.3,0.4,0.1]), np.array([0.22,0.57,0.2,0.88]))
-        exp_posterior_full_distr_samples = env.generate_posteriors(steward_signal_distribution)
         for i in np.arange(100):
             print(batch_num,i)
+            
             actions = dict()
             for norm_context in env.norm_context_list:
                 #curr_state = env.common_prior[norm_context][0]/sum(env.common_prior[norm_context])
                 #baseline_bels_mean = env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context])
-                #actions.update({agent.id:agent.act_context_misinterpretation(env,baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
-                actions.update({agent.id:agent.act(env,run_type='self-ref',baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+                actions.update({agent.id:agent.act_context_misinterpretation(env,baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+                #actions.update({agent.id:agent.act(env,run_type='self-ref',baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
             env.step(actions,i,baseline=True)
-            
+            ''' common prior is updated based on the action observations for both w and t if baseline is False '''
             for norm_context in env.norm_context_list:
                 if norm_context not in state_evolution_baseline:
                     state_evolution_baseline[norm_context] = dict()
                 if i not in  state_evolution_baseline[norm_context]:
                     state_evolution_baseline[norm_context][i] = []
                 state_evolution_baseline[norm_context][i].append(env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context]))
-                
+            for nidx,n in enumerate(env.norm_context_list):
+                part = len([ag for ag in env.possible_agents if ag.norm_context==n and ag.action[0]!=-1])/len([ag for ag in env.possible_agents if ag.norm_context==n])
+                summary_statistic_baseline['participation'][n].append(part)
+                corr_val = np.sum(env.corr_mat[nidx,:])
+                summary_statistic_baseline['community_correlation'][n].append(corr_val)
+                mean_theta = env.true_state[n]
+                summary_statistic_baseline['mean_theta'][n].append(mean_theta)
+            ''' with baseline=False'''
+            signal_distribution = namedtuple('signal_distribution','w t')
+            steward_signal_distribution = signal_distribution(np.array([0.2,0.3,0.4,0.1]), np.array([0.45,0.45,0.55,0.45]))
+            ''' the posterior gets updated inside this '''
+            exp_posterior_full_distr_samples = env.generate_posteriors(steward_signal_distribution)
+            ''' act is based on the new posterior acting as prior if baseline is False'''
+            actions = dict()
+            for norm_context in env.norm_context_list:
+                actions.update({agent.id:agent.act_context_misinterpretation(env,baseline=False,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+                #actions.update({agent.id:agent.act(env,run_type='self-ref',baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+            observations, rewards, terminations, truncations, infos = env.step(actions,i,baseline=False)
+            for norm_context in env.norm_context_list:
+                if norm_context not in state_evolution:
+                    state_evolution[norm_context] = dict()
+                if i not in  state_evolution[norm_context]:
+                    state_evolution[norm_context][i] = []
+                state_evolution[norm_context][i].append(env.common_prior[norm_context][0]/sum(env.common_prior[norm_context]))
             for nidx,n in enumerate(env.norm_context_list):
                 part = len([ag for ag in env.possible_agents if ag.norm_context==n and ag.action[0]!=-1])/len([ag for ag in env.possible_agents if ag.norm_context==n])
                 summary_statistic['participation'][n].append(part)
-                corr_val = np.sum(env.corr_mat[nidx,:])
-                summary_statistic['community_correlation'][n].append(corr_val)
-                mean_theta = env.true_state[n]
-                summary_statistic['mean_theta'][n].append(mean_theta)
-            
-        #env.common_prior = (np.random.randint(low=1,high=4),np.random.randint(low=1,high=4))
+                
+        
+    for k,v in summary_statistic_baseline.items():
+        print('------',k,'-------')
+        for n,val in v.items():
+            print(n,':',np.mean(val) if len(val)>0 else 'None')
+    print('----with signal summary statistic-----')
     for k,v in summary_statistic.items():
         print('------',k,'-------')
         for n,val in v.items():
             print(n,':',np.mean(val) if len(val)>0 else 'None')
-    cols = ['time', 'belief','norm']
-    lst = []
+    cols = ['time', 'belief','norm','model']
+    lstb,lst = [],[]
     for norm,norm_data in state_evolution_baseline.items():
         for k,v in norm_data.items():
             for _v in v:
-                lst.append([k,_v,norm])
+                lstb.append([k,_v,norm,'no signal'])
+    for norm,norm_data in state_evolution.items():
+        for k,v in norm_data.items():
+            for _v in v:
+                lst.append([k,_v,norm,'signal'])
     df = pd.DataFrame(lst, columns=cols)
     df['norm'] = df['norm'].map({k:k+' ('+str(attr_dict['norm_contexts_distr'][k])+','+' ('+str(beta.mean(a=attr_dict['true_state_distr_params'][k][0],b=attr_dict['true_state_distr_params'][k][1]))+')' for k in env.norm_context_list})
+    dfb = pd.DataFrame(lstb, columns=cols)
+    dfb['norm'] = dfb['norm'].map({k:k+' ('+str(attr_dict['norm_contexts_distr'][k])+','+' ('+str(beta.mean(a=attr_dict['true_state_distr_params'][k][0],b=attr_dict['true_state_distr_params'][k][1]))+')' for k in env.norm_context_list})
+    
     sns.set_theme(style="darkgrid")
     '''
     fig = plt.figure(figsize=(12, 12))
@@ -486,7 +573,9 @@ if __name__ == "__main__":
     ax.set_ylabel('signal distr theta')
     ax.set_zlabel('Reward')
     '''
-    fig = plt.figure(figsize=(12, 12))
-    ax = sns.lineplot(hue="norm", x="time", y="belief", ci="sd", estimator='mean', data=df)
+    fig, ax = plt.subplots(2)
     
+    g1 = sns.lineplot(hue="norm", x="time", y="belief", ci="sd", estimator='mean', data=dfb, ax=ax[0])
+    g2 = sns.lineplot(hue="norm", x="time", y="belief", ci="sd", estimator='mean', data=df, ax=ax[1])
+    plt.tight_layout()
     plt.show()

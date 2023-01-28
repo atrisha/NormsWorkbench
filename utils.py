@@ -23,6 +23,7 @@ from pymoo.util.ref_dirs import get_reference_directions
 import functools
 import operator
 import scipy.special
+from scipy.stats import dirichlet
 
 def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
     x = np.linspace(beta.ppf(0.01, a, b),beta.ppf(0.99, a, b), 100)
@@ -502,10 +503,14 @@ def beta_pdf(x,a,b):
     return ((x**(a-1))*((1-x)**(b-1)))/scipy.special.beta(a,b)
 
 def dirichlet_pdf(x, alpha):
+    
+    return dirichlet.pdf(x, alpha)
+    '''
     return (math.gamma(sum(alpha)) / 
           functools.reduce(operator.mul, [math.gamma(a) for a in alpha]) *
           functools.reduce(operator.mul, [x[i]**(alpha[i]-1.0) for i in range(len(alpha))]))
-  
+    '''
+    
 def runif_in_simplex(n_samples,n_dim):
     ''' Return uniformly random vector in the n-simplex '''
 
