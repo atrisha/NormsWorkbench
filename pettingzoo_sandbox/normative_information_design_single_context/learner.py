@@ -10,6 +10,8 @@ from scipy.stats import beta
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import utils
+import itertools
 
 def get_target_expected_reward(model,state):
     rewards = []
@@ -30,9 +32,9 @@ if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) >
 env.reset()
 env.common_prior = (4, 2)
 env.prior_baseline = env.common_prior
-env.normal_constr_sd = 0.1
+env.normal_constr_w = 0.1
 
-number_of_iterations = 20000
+number_of_iterations = 50000
 env.NUM_ITERS = number_of_iterations
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 qn = QNetwork(input_state_size=3)
@@ -49,28 +51,44 @@ rewards_plot = []
 print('Using device:', device)
 print()
 optimizer.zero_grad()
+common_prior_train_histogram = []
 #Additional Info when using cuda
 if device.type == 'cuda':
     print(torch.cuda.get_device_name(0))
     print('Memory Usage:')
     print('Allocated:', round(torch.cuda.memory_allocated(0)/1024**3,1), 'GB')
     print('Cached:   ', round(torch.cuda.memory_reserved(0)/1024**3,1), 'GB')
+
+common_prior_list = list(itertools.product(np.arange(1,11),np.arange(1,11)))
+cpl_idx = 0
 for iteration in np.arange(number_of_iterations): 
     #(3, 3) 0.6418616401671191 0.9196206661347156 0.5 -0.8
     ''' Sample a state '''
     if iteration%100 == 0:
-        env.common_prior = (np.random.randint(low=1,high=10),np.random.randint(low=1,high=10))
+        if cpl_idx > len(common_prior_list)-1:
+            cpl_idx = 0
+        env.common_prior = common_prior_list[cpl_idx]
+        cpl_idx += 1
+    common_prior_train_histogram.append(env.common_prior_mean)
     #state = torch.FloatTensor([env.common_prior[0]/sum(env.common_prior), beta(a=env.common_prior[0], b=env.common_prior[1]).var()])
-    state = torch.tensor([env.common_prior[0]/sum(env.common_prior), beta(a=env.common_prior[0], b=env.common_prior[1]).var()], dtype=torch.float32, device=device).unsqueeze(0)
+    state = torch.tensor([env.common_prior[0]/sum(env.common_prior), utils.beta_var(a=env.common_prior[0], b=env.common_prior[1])], dtype=torch.float32, device=device).unsqueeze(0)
     ''' Sample an action '''
     if iteration == 0:
-        action = np.random.random_sample()
+        #action = np.random.random_sample()
+        action = np.random.uniform(low=max(env.common_prior_mean-(env.normal_constr_w/2),0), high=min(env.common_prior_mean+(env.normal_constr_w/2),1))
+    if abs(action-env.common_prior_mean) < env.normal_constr_w:
+        valid_distr = True
+    else:
+        valid_distr = False
     posterior_mean = env.generate_posteriors(action)
-    population_actions = {agent.id:agent.act(env,run_type='self-ref',baseline=False) for agent in env.possible_agents}
-    observations, reward, terminations, truncations, infos = env.step(population_actions,0,baseline=False)
+    if valid_distr:
+        population_actions = {agent.id:agent.act(env,run_type='self-ref',baseline=False) for agent in env.possible_agents}
+        observations, reward, terminations, truncations, infos = env.step(population_actions,0,baseline=False)
+    else:
+        observations, reward, terminations, truncations, infos = env.common_prior, -1, {agent.id:False for agent in env.possible_agents}, {agent.id:False for agent in env.possible_agents}, {agent.id:{} for agent in env.possible_agents},
     action = torch.tensor([[action]], device=device, dtype=torch.float)
     #state_ = torch.FloatTensor([env.common_prior[0]/sum(env.common_prior), beta(a=env.common_prior[0], b=env.common_prior[1]).var()])
-    state_ = torch.tensor([env.common_prior[0]/sum(env.common_prior), beta(a=env.common_prior[0], b=env.common_prior[1]).var()], dtype=torch.float32, device=device).unsqueeze(0)
+    state_ = torch.tensor([env.common_prior[0]/sum(env.common_prior), utils.beta_var(a=env.common_prior[0], b=env.common_prior[1])], dtype=torch.float32, device=device).unsqueeze(0)
     input_tensor = torch.cat((state,action),axis=1)
     current_reward = agent.qnetwork.forward(input_tensor)
     target_reward = torch.add(torch.mul(get_target_expected_reward(agent.qnetwork,state_)[0], GAMMA), reward)
@@ -81,7 +99,7 @@ for iteration in np.arange(number_of_iterations):
     reward_tracker.append([target_reward.item(),current_reward.item()])
     
     if np.random.random_sample() < epsilon:
-        action = np.random.random_sample()
+        action = np.random.uniform(low=max(env.common_prior_mean-(env.normal_constr_w/2),0), high=min(env.common_prior_mean+(env.normal_constr_w/2),1))
     else:
         action = get_target_expected_reward(agent.qnetwork,state_)[1].item()
     if iteration % 100 == 0:
@@ -96,6 +114,10 @@ for iteration in np.arange(number_of_iterations):
 
 PATH = '../agent_qnetwork.model'
 torch.save(agent.qnetwork.state_dict(), PATH)
+
+plt.figure()
+plt.hist(common_prior_train_histogram,bins=10)
+plt.show()
 
 cols = ['instance', 'mean loss']
 df = pd.DataFrame(loss_plot[1:], columns=cols)  
@@ -122,7 +144,7 @@ df = pd.DataFrame(opt_plot, columns=cols)
 #fig = plt.figure()
 #ax = sns.lineplot(x="state", y="action", ci="sd", estimator='mean', data=df)
 sns.lmplot(x="state", y="action", data=df,
-           order=4, ci=None);
+           order=1, ci=None);
 plt.show()       
 
 

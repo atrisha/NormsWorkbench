@@ -13,12 +13,13 @@ from scipy.special import expit
 from collections import Counter
 import utils
 import seaborn as sns
+import pandas as pd
 #import rpy2.robjects as robjects
 #import rpy2.robjects.numpy2ri
 #from rpy2.robjects.packages import importr
 
 
-def simple_repeated_interaction():
+def simple_repeated_interaction(orig_distr,theta_prior):
     class Player():
         def __init__(self,op,u_bar):
             self.op = op
@@ -27,8 +28,8 @@ def simple_repeated_interaction():
     u_bar = 0.3
     cost = lambda x : entropy([x,1-x])
     util = lambda op : op if op > 0.5 else (1-op)
-    orig_distr = (2,1.6)
-    theta_prior = (2,1.3)
+    #orig_distr = (2,1.6)
+    #theta_prior = (3,1.3)
     theta_prime = theta_prior
     op_distr = None
     players = [Player(o,u_bar) for o in np.random.uniform(low=0.5,high=1,size=int(100*(orig_distr[0]/sum(orig_distr))))]
@@ -36,7 +37,7 @@ def simple_repeated_interaction():
     np.random.shuffle(players)
     bels = []
     print('prior:',theta_prior[0]/sum(theta_prior))
-    for run_idx in np.arange(300):
+    for run_idx in np.arange(100):
         '''
         if run_idx ==0:
             plt.hist([pl.op for pl in players],bins=10)
@@ -69,30 +70,54 @@ def simple_repeated_interaction():
     return bels
 #simple_repeated_interaction()
 
-end_thetas = []
-for i in np.arange(100):
-    bels = simple_repeated_interaction()
-    plt.plot(np.arange(len(bels)), bels, color='blue')
-    end_thetas.append(bels[-1])
+cols = ['Time', 'Descriptive belief','run_id']
+end_thetas, lst = [], []
+run_id = 0
+for orig_distr,theta_prior in [((2,1.6),(4,2)),((2,1.6),(3,1.3)),((2,1.6),(5,2)),((2,1.6),(2,3.33))]:
+    for i in np.arange(100):
+        bels = simple_repeated_interaction(orig_distr,theta_prior)
+        #plt.plot(np.arange(len(bels)), bels, color='blue')
+        for _t in np.arange(len(bels)):
+            lst.append([_t,bels[_t],run_id])
+        end_thetas.append(bels[-1])
+    run_id += 1
+df = pd.DataFrame(lst, columns=cols)
+sns.set_theme(style="darkgrid")
+fig = plt.figure(figsize=(6, 6))
+sns.hls_palette(l=.3)
+palette = sns.color_palette(['black'])
+ax = sns.lineplot(hue = 'run_id', x="Time", y="Descriptive belief", ci="sd", estimator='mean', data=df
+                  ,palette=sns.color_palette(['black'], 4))
+plt.legend([],[], frameon=False)
 plt.figure()
 plt.hist(end_thetas,bins=10)
 plt.show()
 
 class Simple_egocentric_two_context_model_repeated_interaction():
-    def play_dynamic(self):
+    
+    def calc_expectation(self, norm_weights, priors):
+        norms_thetas = priors[:,0]/np.sum(priors,axis=1)
+        exp_a = np.array(norm_weights)[:,None].T
+        exp_b = norms_thetas[:,None]
+        exp = exp_a @ exp_b
+        return exp[0]
+        
+    def play_dynamic(self, theta_prior):
         class Player():
             def __init__(self,op,u_bar):
                 self.op = op
                 self.u_bar = u_bar
-        
+        num_contexts = 2
         u_bar = 0.3
         cost = lambda x : entropy([x,1-x])
         util = lambda op : op if op > 0.5 else (1-op)
         orig_distr_ctx1 = (4,2)
         orig_distr_ctx2 = (1,3)
-        theta_prior = np.array([[8,4],[2,8]])
-        theta_prime = theta_prior
         context_weights = [0.7,0.3]
+        #theta_prior = np.array([[8,4],[2,8]])
+        
+        theta_prime = theta_prior
+        
         op_samples = utils.generate_correleted_opinions(marginal_params=[orig_distr_ctx1,orig_distr_ctx2],
                                                          correlation_val=-0.6, 
                                                          size=100)
@@ -106,17 +131,19 @@ class Simple_egocentric_two_context_model_repeated_interaction():
             pl.op = op_samples[pl_idx,ct_idx]
         bels_ctx1,bels_ctx2 = [],[]
         #print('prior:',theta_prior[0]/sum(theta_prior))
-        for run_idx in np.arange(300):
+        for run_idx in np.arange(100):
             '''
             if run_idx ==0:
                 plt.hist([pl.op for pl in players],bins=10)
                 plt.show()
             '''
+            
             for pl in players:
+                exp_theta = self.calc_expectation(context_weights, theta_prime)
                 if pl.op>=0.5:
-                    bel_op = theta_prime[pl.norm_context,0]/sum(theta_prime[pl.norm_context,:])
+                    bel_op = exp_theta
                 else:
-                    bel_op = 1-(theta_prime[pl.norm_context,0]/sum(theta_prime[pl.norm_context,:]))
+                    bel_op = 1-exp_theta
                 prob_of_N = (bel_op*util(pl.op))/u_bar
                 pl.act = 'e' if prob_of_N > 1 else 'n'
             op_distr = np.mean([pl.op if pl.op > 0.5 else 1-pl.op for pl in players if pl.act=='e'])
@@ -142,20 +169,38 @@ class Simple_egocentric_two_context_model_repeated_interaction():
         return bels_ctx1,bels_ctx2
 
     def run(self):
-        end_thetas = []
+        cols = ['Time', 'Descriptive belief','ctx_id']
+        end_thetas, all_lst = [], []
         context_weights = [0.7,0.3]
-        for i in np.arange(100):
-            bels_ctx1,bels_ctx2 = self.play_dynamic()
-            plt.plot(np.arange(len(bels_ctx1)), bels_ctx1, color='blue')
-            #end_thetas.append(bels_ctx1[-1])
-            plt.plot(np.arange(len(bels_ctx2)), bels_ctx2, color='red')
+        for theta_prior in [np.array([[8,4],[2,8]]),np.array([[8,2],[3,2]]),np.array([[2,8],[2,3]])]:
+            lst = []
+            for i in np.arange(100):
+                bels_ctx1,bels_ctx2 = self.play_dynamic(theta_prior)
+                #plt.plot(np.arange(len(bels_ctx1)), bels_ctx1, color='blue')
+                for _t in np.arange(len(bels_ctx1)):
+                    lst.append([_t,bels_ctx1[_t],0])
+                #end_thetas.append(bels_ctx1[-1])
+                #plt.plot(np.arange(len(bels_ctx2)), bels_ctx2, color='red')
+                for _t in np.arange(len(bels_ctx2)):
+                    lst.append([_t,bels_ctx2[_t],1])
+            all_lst.append(lst)
             end_thetas.append((context_weights[0]*bels_ctx1[-1]) + (context_weights[1]*bels_ctx2[-1]))
-        
+        df_list = []
+        for lst in all_lst:
+            df_list.append(pd.DataFrame(lst, columns=cols))
+        sns.set_theme(style="darkgrid")
+        fig = plt.figure(figsize=(6, 6))
+        sns.hls_palette(l=.3)
+        palettes = [['black'],['blue'],['red']]
+        for dfidx,df in enumerate(df_list):
+            ax = sns.lineplot(hue = 'ctx_id', x="Time", y="Descriptive belief", ci="sd", estimator='mean', data=df
+                          ,palette=sns.color_palette(palettes[dfidx], 2))
+        plt.legend([],[], frameon=False)
         plt.figure()
         plt.hist(end_thetas,bins=10)
         print('mean population end thetas:',np.mean(end_thetas))
         plt.show()   
-'''       
+'''     
 env_obj = Simple_egocentric_two_context_model_repeated_interaction()
 env_obj.run()
 '''

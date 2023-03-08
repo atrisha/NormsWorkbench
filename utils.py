@@ -14,12 +14,12 @@ from scipy.stats import beta
 import itertools
 from Equilibria import CorrelatedEquilibria, PureNashEquilibria
 from collections import Counter
-import rpy2.robjects as robjects
-import rpy2.robjects.numpy2ri
-from rpy2.robjects.packages import importr
+#import rpy2.robjects as robjects
+#import rpy2.robjects.numpy2ri
+#from rpy2.robjects.packages import importr
 import warnings
 from astropy.stats import sigma_clipping
-from pymoo.util.ref_dirs import get_reference_directions
+#from pymoo.util.ref_dirs import get_reference_directions
 import functools
 import operator
 import scipy.special
@@ -402,7 +402,7 @@ def get_mom_update(sample_mean,sample_var):
     mom_beta_est = lambda u,v : (1-u) * (((u*(1-u))/v) - 1)
     return np.array([mom_alpha_est(sample_mean,sample_var), mom_beta_est(sample_mean,sample_var)]).reshape((1,2))
 
-def em(xs, thetas, max_iter=100, tol=1e-6):
+def em(xs, thetas, max_iter=1000, tol=1e-6):
     """Expectation-maximization for coin sample problem."""
     ll_old = -np.infty
     thetas = np.where(thetas < 10**-6,thetas+(10**-6),thetas)
@@ -468,7 +468,7 @@ def est_beta_from_mu_sigma(mu, sigma):
     return (alpha,beta)
 
 class Gaussian_plateu_distribution():
-    
+    ''' https://stats.stackexchange.com/a/203756 '''
     def __init__(self,mu,sigma,w):
         self.mu = mu
         self.sigma =sigma
@@ -502,6 +502,9 @@ def generate_unit_lattice(n_samples,n_dim):
 def beta_pdf(x,a,b):
     return ((x**(a-1))*((1-x)**(b-1)))/scipy.special.beta(a,b)
 
+def beta_var(a,b):
+    return (a*b) / ( ((a+b)**2) * (a+b+1) )
+
 def dirichlet_pdf(x, alpha):
     
     return dirichlet.pdf(x, alpha)
@@ -518,8 +521,11 @@ def runif_in_simplex(n_samples,n_dim):
     return k / np.sum(k,axis=1)[:,None]
 
 '''
-gpd_obj = Gaussian_plateu_distribution(.3,.01,.3)
-plt.plot(np.linspace(0,1,100),[gpd_obj.pdf(x) for x in np.linspace(0,1,100)])
+gpd_obj = Gaussian_plateu_distribution(0.5,.01,.3)
+plt.plot(np.linspace(-0.75,0.75,1000),[gpd_obj.pdf(x) for x in np.linspace(-0.75,0.75,1000)],color='black')
+plt.text(0.5, 1, '$\mu=0$', fontsize=12)
+plt.text(0.5, 0.95, '$\sigma = 0.05$', fontsize=12)
+plt.text(0.5, 0.90, '$h=0.3$', fontsize=12)
 plt.show()
 '''
             

@@ -280,7 +280,7 @@ def plot_surface():
     plt.gca().invert_yaxis()
     plt.show()
 
-plot_surface()
+#plot_surface()
 
 def simple_repeated_interaction():
     class Player():
@@ -332,7 +332,7 @@ def simple_repeated_interaction():
     print(theta_prime[0]/sum(theta_prime),op_distr)
     return bels
 #simple_repeated_interaction()
-
+'''
 end_thetas = []
 for i in np.arange(100):
     bels = simple_repeated_interaction()
@@ -341,7 +341,7 @@ for i in np.arange(100):
 plt.figure()
 plt.hist(end_thetas,bins=10)
 plt.show()
-
+'''
 def simple_egocentric_two_context_model_repeated_interaction():
     class Player():
         def __init__(self,op,u_bar):
@@ -507,6 +507,10 @@ def simple_normative_signal_two_context_model_repeated_interaction(b_idx):
     
     
     return bels_ctx1,bels_ctx2,signal_interpretations_ctx1,signal_interpretations_ctx2
+import itertools
+p = list(itertools.product(np.arange(1,11),np.arange(1,11)))
+for x in p:
+    print(x,':',x[0]/(x[0]+x[1]))
 '''
 fig, ax = plt.subplots(nrows=1, ncols=2)
 end_thetas,end_signal_w_thetas = [],[]

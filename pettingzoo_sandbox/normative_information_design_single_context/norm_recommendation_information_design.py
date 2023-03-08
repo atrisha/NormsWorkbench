@@ -217,6 +217,9 @@ class parallel_env(ParallelEnv):
                 self.prior_baseline = (self.prior_baseline[0]+a_prime, self.prior_baseline[1]+b_prime)
     
     def generate_posteriors(self,signal_distribution):
+        if abs(signal_distribution-self.common_prior_mean) > self.normal_constr_w:
+            self.common_posterior = self.common_prior_mean
+            return self.common_prior_mean
         '''
             This method updates the posterior for the population (posterior over the rate of approval) based on the signal dristribution.
             Since signal distribution is a Bernoulli, we can get individual realizations of 0 and 1 separately, and then take the expectation.
@@ -233,16 +236,16 @@ class parallel_env(ParallelEnv):
             post = (prior_x*lik(1),prior_x*lik(0))
             return post
         all_posteriors = []
-        
         priors_rescaled, likelihood_rescaled = dict(), dict()
         for x in np.linspace(0,1,100):
             priors_rescaled[x] = beta.pdf(x, self.common_prior[0], self.common_prior[1])
-            _constr_distr = utils.Gaussian_plateu_distribution(signal_distribution,.01,self.normal_constr_sd)
+            _constr_distr = utils.Gaussian_plateu_distribution(signal_distribution,.01,self.normal_constr_w)
             likelihood_rescaled[x] = _constr_distr.pdf(x)
             #_constr_distr = utils.Gaussian_plateu_distribution(0,.01,self.normal_constr_sd)
             #likelihood_rescaled[x] = _constr_distr.pdf(abs(x-signal_distribution))
         priors_rescaled = {k:v/sum(list(priors_rescaled.values())) for k,v in priors_rescaled.items()}
         likelihood_rescaled = {k:v/sum(list(likelihood_rescaled.values())) for k,v in likelihood_rescaled.items()}
+        
         
         for x in np.linspace(0,1,100):
             posteriors = _post(x,priors_rescaled,likelihood_rescaled)
@@ -250,14 +253,23 @@ class parallel_env(ParallelEnv):
             expected_posterior_for_state_x = (signal_distribution*posteriors[0]) + ((1-signal_distribution)*posteriors[1])
             all_posteriors.append(expected_posterior_for_state_x)
         all_posteriors = [x/np.sum(all_posteriors) for x in all_posteriors]
+        exp_x = np.sum([x*prob_x for x,prob_x in zip(np.linspace(0,1,100),all_posteriors)])
         '''
+        print(exp_x)
+        plt.figure()
+        plt.plot(list(priors_rescaled.keys()),list(priors_rescaled.values()))
+        plt.plot(list(likelihood_rescaled.keys()),list(likelihood_rescaled.values()))
         plt.plot(np.linspace(0,1,100),all_posteriors)
-        plt.xlim(0,1)
+        plt.title('likelihood:'+str(signal_distribution)+','+str(self.common_prior[0]/sum(self.common_prior)))
         plt.show()
         '''
-        exp_x = np.sum([x*prob_x for x,prob_x in zip(np.linspace(0,1,100),all_posteriors)])
         self.common_posterior = exp_x
         return exp_x
+    
+    @property
+    def common_prior_mean(self):   
+        return self.common_prior[0]/sum(self.common_prior)
+    
         
 class Player():
     
@@ -357,7 +369,16 @@ class RunInfo():
         
 if __name__ == "__main__":
     """ ENV SETUP """
+    common_prior = (3,1.3)
+    normal_constr_w = 0.2
+    common_prior_mean = common_prior[0]/sum(common_prior)
     state_evolution,state_evolution_baseline = dict(), dict()
+    lst = []
+    #for signal_distr_theta_idx, signal_distr_theta in enumerate([common_prior_mean-(normal_constr_w+0.05),common_prior_mean-(normal_constr_w-0.05),common_prior_mean+(normal_constr_w+0.05),common_prior_mean+(normal_constr_w-0.05)]):
+    '''
+    if signal_distr_theta <=0 or signal_distr_theta >=1:
+        continue
+    '''
     for batch_num in np.arange(100):
         env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.55}})
         ''' Check that every norm context has at least one agent '''
@@ -366,9 +387,9 @@ if __name__ == "__main__":
         env.reset()
         env.no_print = True
         env.NUM_ITERS = 100
-        env.common_prior = (4,2)
+        env.common_prior = common_prior
         env.prior_baseline = env.common_prior
-        env.normal_constr_sd = 0.3
+        env.normal_constr_w = normal_constr_w
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(env.common_prior[0]/sum(env.common_prior),.01,.3)
         #env.constraining_distribution = utils.Gaussian_plateu_distribution(.3,.01,.3)
         dataset = []
@@ -376,6 +397,22 @@ if __name__ == "__main__":
     
         for i in np.arange(100):
             print(batch_num,i)
+            curr_state = env.common_prior[0]/sum(env.common_prior)
+            #signal_distr_theta = curr_state - 0.3
+            if curr_state >= 0.7:
+                signal_distr_theta = curr_state-env.normal_constr_w
+            elif curr_state <= 0.3:
+                signal_distr_theta = curr_state+env.normal_constr_w
+            else:
+                signal_distr_theta = 0.5
+            
+            _d = abs(signal_distr_theta-env.common_prior_mean)
+            if _d <= env.normal_constr_w:
+                valid_distr = True
+            else:
+                valid_distr = False
+            
+            
             if i not in  state_evolution:
                 state_evolution[i] = []
             state_evolution[i].append(env.common_prior[0]/sum(env.common_prior))
@@ -383,43 +420,47 @@ if __name__ == "__main__":
                 state_evolution_baseline[i] = []
             state_evolution_baseline[i].append(env.prior_baseline[0]/sum(env.prior_baseline))
             
-            curr_state = env.common_prior[0]/sum(env.common_prior)
-            #signal_distr_theta = curr_state - 0.3
-            
-            if curr_state > 0.6:
-                signal_distr_theta = 0.45
-            elif curr_state < 0.4:
-                signal_distr_theta = 0.55
-            else:
-                signal_distr_theta = 0.5
             
             #signal_distr_theta = np.random.uniform()
-            ''' the posterior gets updated inside this '''
-            posterior_mean = env.generate_posteriors(signal_distr_theta)
             baseline_bels_mean = env.prior_baseline[0]/sum(env.prior_baseline)
+            ''' the posterior gets updated inside this '''
+            _d = abs(signal_distr_theta-env.common_prior_mean)
+            if valid_distr:
+                posterior_mean = env.generate_posteriors(signal_distr_theta)
+            else:
+                posterior_mean = baseline_bels_mean
             
-            ''' act is based on the new posterior acting as prior '''
-            actions = {agent.id:agent.act(env,run_type='self-ref',baseline=False) for agent in env.possible_agents}
-            ''' common prior is updated based on the action observations '''
-            observations, rewards, terminations, truncations, infos = env.step(actions,i,baseline=False)
-            s,a,r = curr_state, signal_distr_theta, rewards
-            new_common_prior_mean = env.common_prior[0]/sum(env.common_prior)
             
-            
+            if valid_distr:
+                ''' act is based on the new posterior acting as prior '''
+                actions = {agent.id:agent.act(env,run_type='self-ref',baseline=False) for agent in env.possible_agents}
+                ''' common prior is updated based on the action observations '''
+                observations, rewards, terminations, truncations, infos = env.step(actions,i,baseline=False)
+                s,a,r = curr_state, signal_distr_theta, rewards
+                new_common_prior_mean = env.common_prior[0]/sum(env.common_prior)
+                dataset.append((s,a,r))
+                next_state = observations
+            else:
+                env.common_prior = env.prior_baseline
             actions = {agent.id:agent.act(env,run_type='self-ref',baseline=True) for agent in env.possible_agents}
             env.step(actions,i,baseline=True)
-            next_state = observations
-            dataset.append((s,a,r))
+            
+            
+            
+            #env.common_prior = (np.random.randint(low=1,high=4),np.random.randint(low=1,high=4))
+        cols = ['time', 'belief','model']
+        only_baseline_plot = False
         
-        #env.common_prior = (np.random.randint(low=1,high=4),np.random.randint(low=1,high=4))
-    cols = ['time', 'belief','model']
-    lst = []
-    for k,v in state_evolution.items():
-        for _v in v:
-            lst.append([k,_v,'signal'])
-    for k,v in state_evolution_baseline.items():
-        for _v in v:
-            lst.append([k,_v,'no signal'])
+        
+        if not only_baseline_plot:
+            for k,v in state_evolution.items():
+                for _v in v:
+                    lst.append([k,_v,'signal'])
+            
+        
+        for k,v in state_evolution_baseline.items():
+            for _v in v:
+                lst.append([k,_v,'no signal'])
     df = pd.DataFrame(lst, columns=cols)
     
     sns.set_theme(style="darkgrid")
@@ -431,7 +472,8 @@ if __name__ == "__main__":
     ax.set_ylabel('signal distr theta')
     ax.set_zlabel('Reward')
     '''
-    fig = plt.figure(figsize=(12, 12))
+    fig = plt.figure(figsize=(6, 6))
     ax = sns.lineplot(hue="model", x="time", y="belief", ci="sd", estimator='mean', data=df)
-    
+    if only_baseline_plot:
+        plt.legend([],[], frameon=False)
     plt.show()
