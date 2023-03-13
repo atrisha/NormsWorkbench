@@ -13,16 +13,7 @@ import pandas as pd
 import utils
 import itertools
 
-def get_target_expected_reward(model,state):
-    rewards = []
-    actions = torch.rand(size=(1000,1),dtype=torch.float32, device=device)
-    state_repeat = state.repeat(1000,1)
-    input_as_batch = torch.cat((state_repeat,actions),axis=1).unsqueeze(0)
-    out = model.forward(input_as_batch)
-    max_reward = torch.max(out)
-    act_index = torch.argmax(out) 
-    argmax_act = actions[act_index]
-    return max_reward, argmax_act
+
     
 use_cuda = torch.cuda.is_available()
 env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.6}})
@@ -91,7 +82,7 @@ for iteration in np.arange(number_of_iterations):
     state_ = torch.tensor([env.common_prior[0]/sum(env.common_prior), utils.beta_var(a=env.common_prior[0], b=env.common_prior[1])], dtype=torch.float32, device=device).unsqueeze(0)
     input_tensor = torch.cat((state,action),axis=1)
     current_reward = agent.qnetwork.forward(input_tensor)
-    target_reward = torch.add(torch.mul(get_target_expected_reward(agent.qnetwork,state_)[0], GAMMA), reward)
+    target_reward = torch.add(torch.mul(utils.get_target_expected_reward(agent.qnetwork,state_)[0], GAMMA), reward)
     loss = lossFunc(target_reward,current_reward)
     loss.backward()
     optimizer.step()
@@ -101,7 +92,7 @@ for iteration in np.arange(number_of_iterations):
     if np.random.random_sample() < epsilon:
         action = np.random.uniform(low=max(env.common_prior_mean-(env.normal_constr_w/2),0), high=min(env.common_prior_mean+(env.normal_constr_w/2),1))
     else:
-        action = get_target_expected_reward(agent.qnetwork,state_)[1].item()
+        action = utils.get_target_expected_reward(agent.qnetwork,state_)[1].item()
     if iteration % 100 == 0:
         mean_loss=np.mean(loss_tracker)
         rewards_plot.append(mean_loss)
@@ -134,7 +125,7 @@ for s in np.linspace(0,1,100):
     opt_act = []
     for v in np.linspace(0,.1,10):
         _state = torch.tensor([s,v], dtype=torch.float32, device=device).unsqueeze(0)
-        max_reward, argmax_act = get_target_expected_reward(agent.qnetwork,_state)
+        max_reward, argmax_act = utils.get_target_expected_reward(agent.qnetwork,_state)
         opt_act.append(argmax_act.item())
     opt_act = np.mean(opt_act)
     opt_plot.append([s,opt_act])

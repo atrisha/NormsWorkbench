@@ -24,6 +24,7 @@ import functools
 import operator
 import scipy.special
 from scipy.stats import dirichlet
+import torch
 
 def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
     x = np.linspace(beta.ppf(0.01, a, b),beta.ppf(0.99, a, b), 100)
@@ -520,14 +521,26 @@ def runif_in_simplex(n_samples,n_dim):
     k = np.random.exponential(scale=1.0, size=(n_samples,n_dim))
     return k / np.sum(k,axis=1)[:,None]
 
-'''
-gpd_obj = Gaussian_plateu_distribution(0.5,.01,.3)
-plt.plot(np.linspace(-0.75,0.75,1000),[gpd_obj.pdf(x) for x in np.linspace(-0.75,0.75,1000)],color='black')
-plt.text(0.5, 1, '$\mu=0$', fontsize=12)
-plt.text(0.5, 0.95, '$\sigma = 0.05$', fontsize=12)
-plt.text(0.5, 0.90, '$h=0.3$', fontsize=12)
+def get_target_expected_reward(model,state):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    rewards = []
+    actions = torch.rand(size=(1000,1),dtype=torch.float32, device=device)
+    state_repeat = state.repeat(1000,1)
+    input_as_batch = torch.cat((state_repeat,actions),axis=1).unsqueeze(0)
+    out = model.forward(input_as_batch)
+    max_reward = torch.max(out)
+    act_index = torch.argmax(out) 
+    argmax_act = actions[act_index]
+    return max_reward, argmax_act
+
+
+gpd_obj = Gaussian_plateu_distribution(0.6,.05,.3)
+plt.plot(np.linspace(0,1,1000),[gpd_obj.pdf(x) for x in np.linspace(0,1,1000)],color='black')
+plt.text(0.25, 1, '$\mu=0.6$', fontsize=12)
+plt.text(0.25, 0.95, '$\sigma = 0.05$', fontsize=12)
+plt.text(0.25, 0.90, '$h=0.3$', fontsize=12)
 plt.show()
-'''
+
             
 '''
 opinions,corr_mat = generate_samples()
