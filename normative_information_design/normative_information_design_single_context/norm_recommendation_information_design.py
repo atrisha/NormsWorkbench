@@ -11,7 +11,7 @@ from gymnasium.spaces import Discrete, Box
 import numpy as np
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
-from pettingzoo_sandbox.all_networks import QNetwork
+from normative_information_design.all_networks import QNetwork
 import constants
 import utils
 import matplotlib.pyplot as plt
@@ -48,7 +48,7 @@ class parallel_env(ParallelEnv):
         These attributes should not be changed after initialization.
         """
         self.num_players = 100
-        self.update_rate = 10
+        self.update_rate = 1
         #self.norm_context_list = ['n1','n2','n3','n4']
         self.norm_context_list = ['n1']
         self.security_util = 0.3
@@ -181,7 +181,7 @@ class parallel_env(ParallelEnv):
             
             baseline_op_mean = np.mean([ag.opinion[ag.norm_context] for ag in self.agents])
             num_participation = len([ag for ag in self.agents if ag.action[0]!=-1])/self.num_players
-            rewards = (num_participation-0.4)*2
+                
             terminations = {agent.id: False for agent in self.agents}
     
             self.num_moves += 1
@@ -193,9 +193,16 @@ class parallel_env(ParallelEnv):
             num_disappr = len([ag.action[0] for ag in self.agents if ag.action[0]==0 and ag.action[0]!=-1])
             if num_observation > 0:
                 theta_prime_rate = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
-                a_prime = theta_prime_rate*self.update_rate
-                b_prime =  self.update_rate-a_prime
+                a_prime,b_prime = utils.est_beta_from_mu_sigma(theta_prime_rate, 0.2)
+                a_prime = a_prime*self.update_rate
+                b_prime = a_prime*self.update_rate
                 self.common_prior = (self.common_prior[0]+a_prime, self.common_prior[1]+b_prime)
+            if not self.stewarding_flag:
+                rewards = (num_participation-0.4)*2
+            else:
+                curr_bels = self.common_prior[0]/np.sum(self.common_prior)
+                target_op = self.target_op
+                rewards = (target_op-curr_bels)**2
             
             observations = self.common_prior
             # typically there won't be any information in the infos, but there must
@@ -213,6 +220,8 @@ class parallel_env(ParallelEnv):
             num_disappr = len([ag.action[0] for ag in self.agents if ag.action[0]==0 and ag.action[0]!=-1])
             if num_observation > 0:
                 theta_prime_rate = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
+                #theta_prime_by_nums = num_appr /(num_appr+num_disappr)
+                #theta_prime_rate = theta_prime_by_nums
                 a_prime = theta_prime_rate*self.update_rate
                 b_prime =  self.update_rate-a_prime
                 self.prior_baseline = (self.prior_baseline[0]+a_prime, self.prior_baseline[1]+b_prime)
@@ -370,17 +379,16 @@ class RunInfo():
         
 if __name__ == "__main__":
     """ ENV SETUP """
-    common_prior = (2,3.3)
-    normal_constr_w = 0.1
+    common_prior = (2,11.3)
+    normal_constr_w = 0.2
     common_prior_mean = common_prior[0]/sum(common_prior)
     state_evolution,state_evolution_baseline = dict(), dict()
     lst = []
     #for signal_distr_theta_idx, signal_distr_theta in enumerate([common_prior_mean-(normal_constr_w+0.05),common_prior_mean-(normal_constr_w-0.05),common_prior_mean+(normal_constr_w+0.05),common_prior_mean+(normal_constr_w-0.05)]):
     '''
-    if signal_distr_theta <=0 or signal_distr_theta >=1:
-        continue
+        opt_signals acquired from running solving_tools.py separately
     '''
-    opt_signals = {0.1:0.1, 0.2:0.1, 0.3:0.4, 0.4:0.5, 0.5:0.5, 0.6:0.5, 0.7:0.7, 0.8:0.7, 0.9:0.8}
+    opt_signals = {0.1:0.1, 0.2:0.1, 0.3:0.4, 0.4:0.5, 0.5:0.5, 0.6:0.5, 0.7:0.6, 0.8:0.7, 0.9:0.8}
     for batch_num in np.arange(100):
         env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.55}})
         ''' Check that every norm context has at least one agent '''
@@ -403,24 +411,7 @@ if __name__ == "__main__":
             #signal_distr_theta = curr_state - 0.3
             
             signal_distr_theta = opt_signals[round(curr_state,1)]
-            '''
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            q_model = QNetwork(input_state_size=3)
-            q_model.load_state_dict(torch.load('../agent_qnetwork.model'))
-            q_model = q_model.to(device)
-            opt_act = []
-            for _act in np.arange(0.1,1,.1):
-                
-                action = torch.tensor([[_act]], device=device, dtype=torch.float)
-                #state_ = torch.FloatTensor([env.common_prior[0]/sum(env.common_prior), beta(a=env.common_prior[0], b=env.common_prior[1]).var()])
-                state_ = torch.tensor([env.common_prior[0]/sum(env.common_prior), utils.beta_var(a=env.common_prior[0], b=env.common_prior[1])], dtype=torch.float32, device=device).unsqueeze(0)
-                input_tensor = torch.cat((state_,action),axis=1)
-                current_reward = q_model.forward(input_tensor)
-                opt_act.append((_act,current_reward.item()))
-            opt_act = sorted(opt_act, key=lambda tup: tup[0])[-1][0]
             
-            signal_distr_theta = opt_act
-            '''
             _d = abs(signal_distr_theta-env.common_prior_mean)
             if _d <= env.normal_constr_w:
                 valid_distr = True
@@ -488,8 +479,8 @@ if __name__ == "__main__":
     ax.set_zlabel('Reward')
     '''
     fig = plt.figure(figsize=(6, 6))
-    ax = sns.lineplot(hue="model", x="time", y="belief", ci="sd", estimator='mean', data=df)
+    ax = sns.lineplot(hue="model", x="time", y="belief", errorbar="sd", estimator='mean', data=df)
     #if only_baseline_plot:
-    plt.legend([],[], frameon=False)
+    #plt.legend([],[], frameon=False)
     plt.title(common_prior)
     plt.show()

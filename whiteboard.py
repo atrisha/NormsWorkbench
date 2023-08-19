@@ -507,10 +507,7 @@ def simple_normative_signal_two_context_model_repeated_interaction(b_idx):
     
     
     return bels_ctx1,bels_ctx2,signal_interpretations_ctx1,signal_interpretations_ctx2
-import itertools
-p = list(itertools.product(np.arange(1,11),np.arange(1,11)))
-for x in p:
-    print(x,':',x[0]/(x[0]+x[1]))
+#action_selection_gird()
 '''
 fig, ax = plt.subplots(nrows=1, ncols=2)
 end_thetas,end_signal_w_thetas = [],[]

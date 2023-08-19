@@ -29,7 +29,7 @@ from scipy.stats import beta, norm, dirichlet
 import seaborn as sns
 import pandas as pd
 import math
-
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 class heterogenous_parallel_env(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "sim_s1"}
@@ -44,7 +44,7 @@ class heterogenous_parallel_env(ParallelEnv):
         """
         self.num_players = 100
         self.update_rate = 10
-        self.norm_context_list = ['n1','n2','n3','n4']
+        self.norm_context_list = ['n1','n2','n3']
         self.norm_context_list_len = len(self.norm_context_list)
         self.security_util = 0.3
         self.possible_agents = [Player(r) for r in range(self.num_players)]
@@ -96,8 +96,8 @@ class heterogenous_parallel_env(ParallelEnv):
         ''' reconcile the true state based on the generated samples '''
         self.true_state = {n:self.opinion_marginals[idx] for idx,n in enumerate(self.norm_context_list)}
         
-        weight_samples = utils.runif_in_simplex(10000,4)
-        theta_samples = np.random.uniform(size=(10000,4))
+        weight_samples = utils.runif_in_simplex(10000,3)
+        theta_samples = np.random.uniform(size=(10000,3))
         self.domain_samples =  np.hstack((weight_samples,theta_samples))
         
         
@@ -255,16 +255,17 @@ class heterogenous_parallel_env(ParallelEnv):
             '''
             if num_observation > 0:
                 for nidx,n in enumerate(self.norm_context_list):
-                    if n == 'n1':
-                        f=1
-                    obs_op_vals = [ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n]
+                    obs_op_vals = [ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1]
                     theta_prime_rate = np.mean(obs_op_vals) if len(obs_op_vals) > 0 else None
-                    obs_weight = len([ag.action[1] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n])/num_observation
+                    #obs_weight = len([ag.action[1] for ag in self.agents if ag.action[0]!=-1 and ag.norm_context==n])/num_observation
                     if theta_prime_rate is not None:
                         a_prime = theta_prime_rate*self.update_rate
                         b_prime =  self.update_rate-a_prime
-                        self.prior_baseline[n] = (self.prior_baseline[n][0]+a_prime, self.prior_baseline[n][1]+b_prime)
-                    self.prior_baseline_w[n] = self.prior_baseline_w[n]+(obs_weight*self.update_rate)
+                        #self.prior_baseline[n] = (self.prior_baseline[n][0]+a_prime, self.prior_baseline[n][1]+b_prime)
+                        for ag in self.agents:
+                            if ag.norm_context==n:
+                                ag.desc_bel = (ag.desc_bel[0]+a_prime, ag.desc_bel[1]+b_prime)
+                    #self.prior_baseline_w[n] = self.prior_baseline_w[n]+(obs_weight*self.update_rate)
                     
                     
     def _posterior_calc(self,all_samples,steward_distr):
@@ -350,7 +351,7 @@ class heterogenous_parallel_env(ParallelEnv):
     
     @property
     def context_weights_baseline(self):
-        return np.array([self.prior_baseline_w[n]/np.sum(list(self.prior_baseline_w.values())) for n in self.norm_context_list])
+        return np.array([self.norm_contexts_distr[n]/np.sum(list(self.norm_contexts_distr.values())) for n in self.norm_context_list])
     
     @property
     def common_prior_means_baseline_asarray(self):
@@ -385,9 +386,20 @@ class Player():
     
     
     
-    def act(self, env, run_type, baseline,norm_context):
-        if run_type in ['baseline','self-ref']:
-            return self.act_self_ref(env,baseline,norm_context)
+    def act(self, env, baseline, norm_context):
+        w_t = env.w_t
+        theta_t = {k:v[0]/sum(v) for k,v in env.theta_t.items()}
+        
+        ''' bels -1,2,3,4 are binary ordering with context_same, opinion_same'''
+        prob_diff_context = 1-w_t[self.norm_context]
+        checksame = lambda o1,o2: True if (o1>=0.5 and o2 >= 0.5) or (o1<0.5 and o2 < 0.5) else False
+        diff_context_diff_opinion = sum([(1-o)*w_t[n] if self.opinion[self.norm_context] >=0.5 else o*w_t[n] for n,o in theta_t.items() if n!=self.norm_context])
+        diff_context_same_opinion = sum([o*w_t[n] if self.opinion[self.norm_context] >=0.5 else (1-o)*w_t[n] for n,o in theta_t.items() if n!=self.norm_context])
+        same_context_same_opinion = theta_t[self.norm_context]*w_t[self.norm_context] if self.opinion[self.norm_context] >=0.5 else (1-theta_t[self.norm_context])*w_t[self.norm_context]
+        same_context_diff_opinion = (1-theta_t[self.norm_context])*w_t[self.norm_context] if self.opinion[self.norm_context] >=0.5 else theta_t[self.norm_context]*w_t[self.norm_context]
+        all_bels = [diff_context_diff_opinion,diff_context_same_opinion,same_context_diff_opinion,same_context_same_opinion]
+        f = sum(all_bels)
+        f=1
         
     
     def _util(self,desc_bel_op,corr_val_ctx):
@@ -416,23 +428,23 @@ class Player():
             self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context])
         else:
             
-            desc_bel = env.context_weights_baseline @ env.common_prior_means_baseline_asarray.T
+            desc_bel = np.mean(self.desc_bel)
             #desc_bel = np.sum([x[0]*x[1] for x in zip(env.context_weights_baseline,env.common_prior_means_baseline_asarray)])
             #desc_bel = env.common_prior_means_baseline_asarray[env.norm_context_list.index(self.norm_context)]
             desc_bel_op = desc_bel if self.opinion[self.norm_context] >= 0.5 else 1-desc_bel
-            op_val = self.opinion[self.norm_context] if self.opinion[self.norm_context] >= 0.5 else 1-self.opinion[self.norm_context]
+            #op_val = self.opinion[self.norm_context] if self.opinion[self.norm_context] >= 0.5 else 1-self.opinion[self.norm_context]
             self_norm_index = env.norm_context_list.index(self.norm_context)
             #expected_corr = env.context_weights_baseline @ env.corr_mat[self_norm_index,:].T
             expected_corr = np.sum([x[0]*x[1] for x in zip(env.context_weights_baseline , env.corr_mat[self_norm_index,:])])
             #assert norm_context==self.norm_context, 'norm context check failed'
             #util_val = _util(desc_bel_op,expected_corr)
-            util_val = desc_bel_op*util(op_val)
+            util_val = desc_bel_op*util(self.opinion[self.norm_context])
             if util_val < u_bar:
                 self.action_code_baseline = -1
                 self.action_util_baseline = u_bar
             else:
                 self.action_code_baseline = 1 if self.opinion[self.norm_context] >= 0.5 else 0
-                self.action_util_baseline = desc_bel_op*expected_corr
+                self.action_util_baseline = util_val
             '''        
             if (0.4 < self.opinion[self.norm_context] < 0.5) and self.action_code_baseline != -1:
                 f=1
@@ -507,15 +519,17 @@ if __name__ == "__main__":
     lstb,lst = [],[]
     p_list = [1]
     for runid, prior_list in enumerate(p_list):
-        weight_list = [0.2,0.3,0.4,0.1]
+        weight_list = [0.5,0.3,0.2]
         state_evolution_baseline, state_evolution = dict(), dict()
         summary_statistic_baseline = {'participation':{},'community_correlation':{},'mean_theta':{}}
         summary_statistic = {k:v for k,v in summary_statistic_baseline.items()}
         for batch_num in np.arange(100):
-            attr_dict = {'norm_contexts_distr': {_n:weight_list[_nidx] for _nidx,_n in enumerate(['n1','n2','n3','n4'])},
-                        'true_state_distr_params':{'n1':(2,3.3),'n2':(3,4),'n3':(3,1.3),'n4':(5,2)}
+            attr_dict = {'norm_contexts_distr': {_n:weight_list[_nidx] for _nidx,_n in enumerate(['n1','n2','n3'])},
+                        'true_state_distr_params':{'n1':(2,3.3),'n2':(3,4),'n3':(3,1.3)}
                         }
             env = heterogenous_parallel_env(render_mode='human',attr_dict=attr_dict)
+            env.w_t = {'n1':0.5,'n2':0.3,'n3':0.2}
+            env.theta_t = {'n1':(2,3.3),'n2':(3,4),'n3':(3,1.3)}
             ''' Check that every norm context has at least one agent '''
             if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
                 raise Exception()
@@ -524,11 +538,13 @@ if __name__ == "__main__":
             env.NUM_ITERS = 100
             common_prior_var = 0.1
             env.common_prior = {k:utils.est_beta_from_mu_sigma(mu=v+np.random.normal(scale=common_prior_var), sigma=common_prior_var) for k,v in env.true_state.items()}
+            for ag in env.possible_agents:
+                ag.desc_bel = env.common_prior[ag.norm_context]
             env.common_prior = {k:utils.est_beta_from_mu_sigma(mu=v, sigma=common_prior_var) for k,v in env.true_state.items()}
             env.common_prior_w = {k:int(v*10) for k,v in attr_dict['norm_contexts_distr'].items()}
             env.prior_baseline = {k:v for k,v in env.common_prior.items()}
             #env.prior_baseline_w = {k:int(v*10) for k,v in attr_dict['norm_contexts_distr'].items()}
-            env.prior_baseline_w = {'n1':0.1,'n2':0.1,'n3':0.1,'n4':0.7}
+            #env.prior_baseline_w = {'n1':0.1,'n2':0.1,'n3':0.8}
             env.normal_constr_sd = 0.3
             #env.constraining_distribution = utils.Gaussian_plateu_distribution(env.common_prior[0]/sum(env.common_prior),.01,.3)
             #env.constraining_distribution = utils.Gaussian_plateu_distribution(.3,.01,.3)
@@ -547,9 +563,15 @@ if __name__ == "__main__":
                 for norm_context in env.norm_context_list:
                     #curr_state = env.common_prior[norm_context][0]/sum(env.common_prior[norm_context])
                     #baseline_bels_mean = env.prior_baseline[norm_context][0]/sum(env.prior_baseline[norm_context])
-                    actions.update({agent.id:agent.act_context_misinterpretation(env,baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
+                    actions.update({agent.id:agent.act(env,baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
                     #actions.update({agent.id:agent.act(env,run_type='self-ref',baseline=True,norm_context=norm_context) for agent in env.possible_agents if agent.norm_context==norm_context })
                 env.step(actions,i,baseline=True)
+                for _n in env.norm_context_list:
+                    ''' desc beliefs for all agents within a context is the same, so just grab one.'''
+                    for ag in env.possible_agents:
+                        if ag.norm_context == _n:
+                            env.prior_baseline[_n] = ag.desc_bel
+                            break
                 ''' common prior is updated based on the action observations for both w and t if baseline is False '''
                 for norm_context in env.norm_context_list:
                     if norm_context not in state_evolution_baseline:
@@ -634,6 +656,6 @@ if __name__ == "__main__":
     else:
         for runid in np.arange(len(p_list)):
             _dfb = dfb.loc[dfb['run_id'] == runid]
-            sns.lineplot(hue="norm", x="time", y="belief", ci="sd", estimator='mean', data=_dfb, palette=sns.color_palette([coloridx[runid]], 4), ax=ax)
+            sns.lineplot(hue="norm", x="time", y="belief", ci="sd", estimator='mean', data=_dfb, palette=sns.color_palette([coloridx[runid]], 3), ax=ax)
     plt.tight_layout()
     plt.show()

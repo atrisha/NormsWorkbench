@@ -18,13 +18,15 @@ from collections import Counter
 #import rpy2.robjects.numpy2ri
 #from rpy2.robjects.packages import importr
 import warnings
-from astropy.stats import sigma_clipping
+#from astropy.stats import sigma_clipping
 #from pymoo.util.ref_dirs import get_reference_directions
 import functools
 import operator
 import scipy.special
 from scipy.stats import dirichlet
 import torch
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
     x = np.linspace(beta.ppf(0.01, a, b),beta.ppf(0.99, a, b), 100)
@@ -36,7 +38,7 @@ def plot_beta(a,b,ax=None,color=None,label=None,linestyle='-'):
         plt.title('Beta Distribution', fontsize='15')
         plt.xlabel('Values of Random Variable X (0, 1)', fontsize='15')
         plt.ylabel('Probability', fontsize='15')
-        plt.show()
+        #plt.show()
     else:
         ax.set_xlim(0, 1)
         ax.plot(x, beta.pdf(x, a, b), linestyle=linestyle if linestyle is not None else '-', color=plot_color,label=label)
@@ -466,6 +468,7 @@ def generate_correleted_opinions(marginal_params,correlation_val,size):
 def est_beta_from_mu_sigma(mu, sigma):
     alpha = mu**2 * ((1 - mu) / sigma**2 - 1 / mu)
     beta = alpha * (1 / mu - 1)
+    mu_check = alpha/(alpha+beta)
     return (alpha,beta)
 
 class Gaussian_plateu_distribution():
@@ -533,14 +536,19 @@ def get_target_expected_reward(model,state):
     argmax_act = actions[act_index]
     return max_reward, argmax_act
 
+def approx_index(ndarr,val,tol):
+    x = abs(ndarr - val) < tol
+    indx = np.argmax(x)
+    return indx
 
+'''
 gpd_obj = Gaussian_plateu_distribution(0.6,.05,.3)
 plt.plot(np.linspace(0,1,1000),[gpd_obj.pdf(x) for x in np.linspace(0,1,1000)],color='black')
 plt.text(0.25, 1, '$\mu=0.6$', fontsize=12)
 plt.text(0.25, 0.95, '$\sigma = 0.05$', fontsize=12)
 plt.text(0.25, 0.90, '$h=0.3$', fontsize=12)
 plt.show()
-
+'''
             
 '''
 opinions,corr_mat = generate_samples()

@@ -10,7 +10,6 @@ from AIES.norm_objects import *
 import constants
 import numpy as np
 from scipy.interpolate import interp1d
-from anaconda_project.internal.conda_api import result
 import utils
 
 class StaticSimulation:

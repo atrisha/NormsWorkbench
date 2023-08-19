@@ -20,7 +20,8 @@ class CorrelatedEquilibria:
         all_indices = list(itertools.product(*[list(np.arange(len(x))) for x in player_actions]))
         all_vars = ['p'+''.join(list(x)) for x in payoff_dict.keys()]
         
-        all_agents = [p.id for p in players]
+        #all_agents = [p.id for p in players]
+        all_agents =  players
         num_players = len(all_agents)
         high_constr_list = None
         high_bounds_transformed_payoffs = payoff_dict
@@ -67,6 +68,7 @@ class CorrelatedEquilibria:
         if high_constr_list is not None:
             solns = solve_lp_multivar(all_vars,obj_vals,high_constr_list) 
             solns_dict['high'] = solns
+        print(solns)
         rec = solns.index(1)
         rec_strat_str = tuple(list(all_vars[rec][1:]))
         eq_dict =  {rec_strat_str:payoff_dict[rec_strat_str]}
@@ -115,14 +117,14 @@ class PureNashEquilibria():
                 return eq_dict
         else:
             return eq_dict
-'''
-payoff_dict = {('s','s'):[10,17],
-               ('s','h'):[4,16],
-               ('h','s'):[6,10],
-               ('h','h'):[5,20]}
+
+payoff_dict = {('s','s'):[2,2],
+               ('s','h'):[-1,0],
+               ('h','s'):[0,-1],
+               ('h','h'):[1,1]}
 agent_ids = [1,2]
 
 ce = CorrelatedEquilibria()
-ce.solve(payoff_dict, agent_ids)
-'''     
+res = ce.solve(payoff_dict, agent_ids)
+print(res)     
         
