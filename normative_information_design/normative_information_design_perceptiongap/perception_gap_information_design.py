@@ -30,6 +30,10 @@ from scipy.stats import beta, norm
 import seaborn as sns
 import pandas as pd
 import torch
+from sympy.solvers import solve
+from sympy import Symbol
+from scipy import optimize
+import math
 
 
 
@@ -81,10 +85,12 @@ class parallel_env(ParallelEnv):
         """
         self.num_players = 100
         self.update_rate = 10
+        self.sanc_marginal_target = 0.2
         #self.norm_context_list = ['n1','n2','n3','n4']
         self.norm_context_list = ['n1']
         self.security_util = 0.2
         sanctioning_vals = np.random.normal(0.5, 0.1, self.num_players)
+        self.mean_sanction, self.mean_sanction_baseline = 0.5,0.5
         sanctioning_vals = np.clip(sanctioning_vals, 0, 1)
         self.possible_agents = [Player(r) for r in range(self.num_players)]
         self.results_map = dict()
@@ -114,14 +120,14 @@ class parallel_env(ParallelEnv):
         players_private_contexts  = self.players_private_contexts
         for idx,op in enumerate(players_private_contexts): self.possible_agents[idx].norm_context = players_private_contexts[idx]
         
-        #distr_params = {'mean_op_degree':self.true_state['n1']}
-        #ops = self.generate_opinions('uniform',distr_params)
+        distr_params = {'mean_op_degree':self.true_state['n1']}
+        ops = self.generate_opinions('uniform',distr_params)
         
         #distr_params = {'mean_op_degree':self.true_state['n1'],'SD':0.2}
         #ops = self.generate_opinions('gaussian',distr_params)
         
-        distr_params = {'mean_op_degree_apr':0.7,'mean_op_degree_disapr':0.4,'apr_weight':0.3,'SD':0.05}
-        ops = self.generate_opinions('U',distr_params)
+        #distr_params = {'mean_op_degree_apr':0.7,'mean_op_degree_disapr':0.4,'apr_weight':0.3,'SD':0.05}
+        #ops = self.generate_opinions('U',distr_params)
         
         '''
         opinions = np.random.choice([1,0],size=self.num_players,p=[norm_context_appr_rate['n1'], 1-norm_context_appr_rate['n1']])
@@ -233,6 +239,9 @@ class parallel_env(ParallelEnv):
             num_disappr = len([ag.action[0] for ag in self.agents if ag.action[0]==0 and ag.action[0]!=-1])
             
             if num_observation > 0:
+                
+                
+                
                 theta_prime_rate = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
                 a_prime = theta_prime_rate*self.update_rate
                 b_prime =  self.update_rate-a_prime
@@ -240,9 +249,15 @@ class parallel_env(ParallelEnv):
                 
                 a_prime_prop = (num_appr/(num_appr+num_disappr))*self.update_rate
                 b_prime_prop =  self.update_rate-a_prime_prop
-                print('appr-disappr prop',a_prime_prop,b_prime_prop)
+                #print('appr-disappr prop',a_prime_prop,b_prime_prop)
                 self.common_proportion_prior = (self.common_proportion_prior[0]+a_prime_prop, self.common_proportion_prior[1]+b_prime_prop)
-                 
+                
+                mean_appr_degree = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
+                mean_sanctioning_capacity = np.mean([ag.action[3] for ag in self.agents if ag.action[0]!=-1])
+                #print('------>',self.common_proportion_prior[0]/np.sum(self.common_proportion_prior), self.common_prior[0]/np.sum(self.common_prior), '||', mean_appr_degree,mean_sanctioning_capacity,)
+                self.mean_sanction = mean_sanctioning_capacity*mean_appr_degree
+                
+                
             
             ''' Assign (institutional) rewards'''
             if not self.stewarding_flag:
@@ -277,6 +292,11 @@ class parallel_env(ParallelEnv):
                 a_prime_prop = num_participation*self.update_rate
                 b_prime_prop =  self.update_rate-a_prime_prop
                 self.prior_prop_baseline = (self.prior_prop_baseline[0]+a_prime, self.prior_prop_baseline[1]+b_prime)
+                
+                mean_appr_degree = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
+                mean_sanctioning_capacity = np.mean([ag.action[3] for ag in self.agents if ag.action[0]!=-1 and ag.opinion[ag.norm_context] >= 0.5])
+                #print('------>',self.common_proportion_prior[0]/np.sum(self.common_proportion_prior), self.common_prior[0]/np.sum(self.common_prior), '||', mean_appr_degree,mean_sanctioning_capacity,)
+                self.mean_sanction_baseline = mean_sanctioning_capacity*mean_appr_degree
     
     def generate_posteriors(self,signal_distribution):
         if abs(signal_distribution-self.common_prior_mean) > self.normal_constr_w:
@@ -400,6 +420,8 @@ class Player():
                     
             
             self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
+            
+            
         else:
             theta_baseline = env.prior_baseline[0]/sum(env.prior_baseline)
             disappr_bar_baseline = 1 - (u_bar/(1-theta_baseline))
@@ -445,9 +467,25 @@ class Player():
             else:
                 self.action_code = 1 if op >= 0.5 else 0
                 self.action_util = util(op)
-                    
             
-            self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
+            
+            ''' Now the sanctioning selection '''
+            ''' Sanction is selected based on the marginal utility as calculated by taking the derivative of the utility o_{i}*s^{1-o_-i}*n or (1-o_i)s^{o_-i}*(1-n) as applicable '''
+            ''' The derivative of the above function is o_{i}*n*(1-o_-i)s^{-o_-i} or (1-o_{i})*(1-n)*(o_-i)s^{o_-i-1} as applicable '''
+            ''' If the marginal utility threshold is s_max_i  '''
+            
+
+            x = Symbol('x')
+            op_degree = op if op >= 0.5 else (1-op)
+            conc_prop = n_p if op >= 0.5 else (1-n_p)
+            conc_deg = theta if op >= 0.5 else (1-theta)
+            if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
+                opt_sanc = 1
+            else:
+                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
+            self.sanction_intensity = opt_sanc
+            
+            self.action =(self.action_code,self.action_util,self.opinion[self.norm_context],self.sanction_intensity)
         else:
             theta_baseline = env.prior_baseline[0]/sum(env.prior_baseline)
             prop_baseline = env.prior_prop_baseline[0]/sum(env.prior_prop_baseline)
@@ -460,7 +498,17 @@ class Player():
                 self.action_code_baseline = 1 if op >= 0.5 else 0
                 self.action_util_baseline = util_baseline(op)
             
-            self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context])
+            x = Symbol('x')
+            op_degree = op if op >= 0.5 else (1-op)
+            conc_prop = prop_baseline if op >= 0.5 else (1-prop_baseline)
+            conc_deg = theta_baseline if op >= 0.5 else (1-theta_baseline)
+            if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
+                opt_sanc = 1
+            else:
+                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
+            self.sanction_intensity = opt_sanc
+            
+            self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context],self.sanction_intensity)
         
         return self.action
     
@@ -526,10 +574,10 @@ def run_sim(run_param):
             
             if i not in  state_evolution:
                 state_evolution[i] = []
-            state_evolution[i].append(env.common_prior[0]/sum(env.common_prior))
+            state_evolution[i].append((env.common_prior[0]/sum(env.common_prior),env.mean_sanction))
             if i not in  state_evolution_baseline:
                 state_evolution_baseline[i] = []
-            state_evolution_baseline[i].append(env.prior_baseline[0]/sum(env.prior_baseline))
+            state_evolution_baseline[i].append((env.prior_baseline[0]/sum(env.prior_baseline),env.mean_sanction_baseline))
             
             
             #signal_distr_theta = np.random.uniform()
@@ -564,25 +612,25 @@ def run_sim(run_param):
             
             
             #env.common_prior = (np.random.randint(low=1,high=4),np.random.randint(low=1,high=4))
-        cols = ['time', 'belief','model']
+        cols = ['time', 'belief','model','mean_sanctions']
         only_baseline_plot = False
         
         
         if not only_baseline_plot:
             for k,v in state_evolution.items():
                 for _v in v:
-                    lst.append([k,_v,'signal'])
+                    lst.append([k,_v[0],'signal',_v[1]])
             
         
         for k,v in state_evolution_baseline.items():
             for _v in v:
-                lst.append([k,_v,'no signal'])
+                lst.append([k,_v[0],'no signal',_v[1]])
     df = pd.DataFrame(lst, columns=cols)
     return df
 
 if __name__ == "__main__":
     df_list = dict()#(3,1.3),(5,2),(2,3.3)
-    for runlist in [(4,2),(3,1.3),(5,2),(2,3.3)]:
+    for runlist in [(4,2)]:
         run_param ={'common_prior':runlist,'common_proportion_prior':runlist,'normal_constr_w':0.3,
                     'opt_signals':{0.1:0.1, 0.2:0.5, 0.3:0.5, 0.4:0.5, 0.5:0.5, 0.6:0.5, 0.7:0.5, 0.8:0.5, 0.9:0.6}}
         
@@ -605,6 +653,18 @@ if __name__ == "__main__":
         #axes[0,idx] = sns.lineplot(hue="model", x="time", y="belief", errorbar="sd", estimator='mean', data=df_list[run_key])
         #axes[0,idx].set_title(run_key)
         plor_vars[idx] = sns.lineplot(hue="model", x="time", y="belief", errorbar="sd", estimator='mean', data=df_list[run_key], ax=axes[idx] if len(df_list) > 1 else axes)
+        if len(df_list) > 1:
+            axes[idx].set_title(run_key)
+        else:
+            axes.set_title(run_key)
+            
+    fig, axes = plt.subplots(1,len(df_list), figsize=(6, 6), sharex=True, sharey=True)
+    plor_vars = [None]*4
+    for idx,run_key in enumerate(df_list.keys()):
+        print(idx,run_key)
+        #axes[0,idx] = sns.lineplot(hue="model", x="time", y="belief", errorbar="sd", estimator='mean', data=df_list[run_key])
+        #axes[0,idx].set_title(run_key)
+        plor_vars[idx] = sns.lineplot(hue="model", x="time", y="mean_sanctions", errorbar="sd", estimator='mean', data=df_list[run_key], ax=axes[idx] if len(df_list) > 1 else axes)
         if len(df_list) > 1:
             axes[idx].set_title(run_key)
         else:
