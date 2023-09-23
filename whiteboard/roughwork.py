@@ -6,7 +6,7 @@ Created on 15 Jan 2023
 from sympy.stats import P, E, variance, Beta, Normal
 from sympy import simplify
 import numpy as np
-
+import matplotlib.pyplot as plt
 import math
 
 def func1(x):
@@ -45,4 +45,15 @@ def mc_integrate(func, a, b, n = 1000):
     integ = np.sum(y)
     return integ
 
-print(math.pow(0.8, -1))
+def w_chart():
+    def _calcw(d):
+        d = d*10
+        if d < 0:
+            d = 1-abs(d)
+        d = 0 if d < 0 else d
+        return d
+    plt.plot([d for d in np.linspace(-1,1,1000)],[np.exp((d+1)/2) for d in np.linspace(-1,1,1000)],color='blue')
+    plt.plot([d for d in np.linspace(-1,1,1000)],[_calcw(d) for d in np.linspace(-1,1,1000)],color='red')
+    plt.show()
+
+w_chart()

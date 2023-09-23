@@ -285,4 +285,4 @@ for w in np.linspace(0,1,100):
 plt.plot(np.linspace(0,1,100),Y,color='blue')
 plt.show()
 '''
-theta_theta_prime_relation()
+#theta_theta_prime_relation()

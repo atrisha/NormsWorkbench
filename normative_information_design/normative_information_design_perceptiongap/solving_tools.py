@@ -4,15 +4,10 @@ Created on 10 Mar 2023
 @author: Atrisha
 '''
 
-from normative_information_design.normative_information_design_single_context.norm_recommendation_information_design import parallel_env
+from normative_information_design.normative_information_design_perceptiongap.perception_gap_information_design import parallel_env
 import numpy as np
-from scipy.stats import beta
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-import utils
-import itertools
 import mdptoolbox, mdptoolbox.example
+import utils
 
 
 def generate_transition_matrix():
@@ -25,7 +20,7 @@ def generate_transition_matrix():
         actlist_t, actlist_r = [],[]
         for run_iter in np.arange(100):
             
-            env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.55},'stewarding_flag':False})
+            env = parallel_env(render_mode='human',attr_dict={'true_state':{'n1':0.55},'extensive':False})
             ''' Check that every norm context has at least one agent '''
             if not all([True if [_ag.norm_context for _ag in env.possible_agents].count(n) > 0 else False for n in env.norm_context_list]):
                 raise Exception()
@@ -33,8 +28,6 @@ def generate_transition_matrix():
             number_of_iterations = 50000
             env.NUM_ITERS = number_of_iterations
             for state in np.arange(0.1,1,.1): 
-                if state==0.6 and action==0.4:
-                    f=1
                 env.reset()
                 env.common_prior = utils.est_beta_from_mu_sigma(state, 0.2)
                 env.prior_baseline = env.common_prior
@@ -47,7 +40,9 @@ def generate_transition_matrix():
                     valid_distr = True
                 else:
                     valid_distr = False
-                posterior_mean = env.generate_posteriors(action)
+                
+                env.common_posterior,env.common_proportion_posterior = env.generate_posteriors(action)
+                
                 if valid_distr:
                     population_actions = {agent.id:agent.act(env,run_type='self-ref',baseline=False) for agent in env.possible_agents}
                     observations, reward, terminations, truncations, infos = env.step(population_actions,0,baseline=False)
@@ -77,17 +72,9 @@ def generate_transition_matrix():
     return transition_matrix, reward_matrix
 
 P, R = generate_transition_matrix()
-def custom_formatter(x, pos):
-    return f'{(x+1)/10:.1f}'
-plt.imshow(R, cmap='viridis', interpolation='bilinear')  # 'viridis' is a colormap; choose one that suits your data
-plt.colorbar()  # Add a colorbar to the plot
-from matplotlib.ticker import FuncFormatter
-formatter = FuncFormatter(custom_formatter)
-plt.gca().xaxis.set_major_formatter(formatter)
-plt.gca().yaxis.set_major_formatter(formatter)
+
 fh = mdptoolbox.mdp.FiniteHorizon(P, R, 0.5, 100)
 #fh = mdptoolbox.mdp.QLearning(P, R, 0.9)
 fh.run()
-plt.show()
 #print([np.round((x+1)/10,1) for x in list(fh.policy)])
 print(fh.policy[:99])

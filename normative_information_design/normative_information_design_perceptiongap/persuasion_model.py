@@ -103,11 +103,11 @@ def beta_cdf():
 
 pr,pb = (0.3,0.7)
 u_bar,theta = 0.2,pb   
-def calc_bayes_plausible_distr(rr,rb,br,bb):
+def calc_bayes_plausible_distr(rr,rb,br,bb,priors):
     #rr,rb,br,bb = sp.symbols('rr,rb,br,bb')
     #pr,pb = sp.symbols('pr,pb')
     #rr,rb,br,bb = 6/7,1/3,1/7,2/3
-    pr,pb = (0.3,0.7)
+    pr,pb = priors
     r_signal = (rr/(rr+br))*pr + (rb/(rb+bb))*pb
     b_signal = (br/(rr+br))*pr + (bb/(rb+bb))*pb
     pos_state_r_signal_r = (rr*pr)/(rr*pr + rb*pb)
@@ -122,37 +122,40 @@ def calc_bayes_plausible_distr(rr,rb,br,bb):
     #print('expected posteriors',expected_posterior_r,expected_posterior_b)
     #print(solutions)
     #receivers = ['rs','rh','bh','bs']
-    r_signal_ll = pos_state_r_signal_r*np.clip(1-(u_bar/pos_state_r_signal_r),0,0.5) + pos_state_b_signal_r*np.clip(1-(u_bar/(1-pos_state_b_signal_r)),0,0.5)
-    r_signal_lh = pos_state_r_signal_r*np.clip(u_bar/(1-pos_state_r_signal_r),0.5,1)  + pos_state_b_signal_r*np.clip(u_bar/pos_state_b_signal_r,0.5,1) 
-    b_signal_ll = pos_state_r_signal_b*np.clip(1-(u_bar/pos_state_r_signal_b),0,0.5) + pos_state_b_signal_b*np.clip(1-(u_bar/(1-pos_state_b_signal_b)),0,0.5)
-    b_signal_lh = pos_state_r_signal_b*np.clip(u_bar/(1-pos_state_r_signal_b),0.5,1)  + pos_state_b_signal_b*np.clip(u_bar/pos_state_b_signal_b,0.5,1)
-    exp_ll,exp_lh = r_signal*r_signal_ll + b_signal*b_signal_ll, r_signal*r_signal_lh + b_signal*b_signal_lh
-    return exp_ll,exp_lh
+    #r_signal_ll = pos_state_r_signal_r*np.clip(1-(u_bar/pos_state_r_signal_r),0,0.5) + pos_state_b_signal_r*np.clip(1-(u_bar/(1-pos_state_b_signal_r)),0,0.5)
+    #r_signal_lh = pos_state_r_signal_r*np.clip(u_bar/(1-pos_state_r_signal_r),0.5,1)  + pos_state_b_signal_r*np.clip(u_bar/pos_state_b_signal_r,0.5,1) 
+    #b_signal_ll = pos_state_r_signal_b*np.clip(1-(u_bar/pos_state_r_signal_b),0,0.5) + pos_state_b_signal_b*np.clip(1-(u_bar/(1-pos_state_b_signal_b)),0,0.5)
+    #b_signal_lh = pos_state_r_signal_b*np.clip(u_bar/(1-pos_state_r_signal_b),0.5,1)  + pos_state_b_signal_b*np.clip(u_bar/pos_state_b_signal_b,0.5,1)
+    #exp_ll,exp_lh = r_signal*r_signal_ll + b_signal*b_signal_ll, r_signal*r_signal_lh + b_signal*b_signal_lh
+    return expected_posterior_r,expected_posterior_b
 
-lst = []
-cols = ['rr','rb','orig_diff', 'changed_diff','orig_vals_l','orig_vals_h','changed_vals_l','changed_vals_h']
-
-
-for rr in np.linspace(0.5,1,100):
-    for rb in np.linspace(0.01,0.5,100):
+if __name__ == "__main__":
+    lst = []
+    cols = ['rr','rb','orig_diff', 'changed_diff','orig_vals_l','orig_vals_h','changed_vals_l','changed_vals_h']
+    
+    priors = (0.6,0.4)
+    #for rr in np.linspace(0.5,1,100):
+    rr = 1
+    for rb in np.linspace(0.01,0.99,100):
         bb = 1 - rb
         br = 1 - rr
-        exp_ll,exp_lh = calc_bayes_plausible_distr(rr,rb,br,bb)
-        l_l = np.clip(1-(u_bar/(1-theta)),0,0.5)
-        l_h = np.clip(u_bar/theta,0.5,1) 
-        print([abs(l_l-l_h),abs(exp_ll-exp_lh),l_l,l_h,exp_ll,exp_lh])
-        lst.append([rr,rb,abs(l_l-l_h),abs(exp_ll-exp_lh),l_l,l_h,exp_ll,exp_lh])
-df = pd.DataFrame(lst, columns=cols)
-print(df.loc[df['changed_vals_l'].idxmin()])       
-print(df.loc[df['changed_vals_h'].idxmax()])       
-'''     
-ctx_w = [0.3,0.3,0.4]
-ctx_marg_theta = [0.7]*3
-from itertools import product
-cross_product = list(product([0,1], repeat=3))
-for j in cross_product:
-    exp_util = np.prod(np.asarray([nt if o==1 else (1-nt) for nt,o in zip(ctx_marg_theta,list(j))]))
-    jtheta = np.sum(j)/3
-    exp_util2 = np.sum(np.asarray([nt*o + (1-nt)*(1-o) for nt,o in zip(ctx_marg_theta,[jtheta]*3)]))/3
-    print(j,exp_util,exp_util2, jtheta)
-'''
+        exp_r,exp_b = calc_bayes_plausible_distr(rr,rb,br,bb,priors)
+        print(rb,exp_r,exp_b)
+        #l_l = np.clip(1-(u_bar/(1-theta)),0,0.5)
+        #l_h = np.clip(u_bar/theta,0.5,1) 
+        #print([abs(l_l-l_h),abs(exp_ll-exp_lh),l_l,l_h,exp_ll,exp_lh])
+        #lst.append([rr,rb,abs(l_l-l_h),abs(exp_ll-exp_lh),l_l,l_h,exp_ll,exp_lh])
+    #df = pd.DataFrame(lst, columns=cols)
+    #print(df.loc[df['changed_vals_l'].idxmin()])       
+    #print(df.loc[df['changed_vals_h'].idxmax()])       
+    '''     
+    ctx_w = [0.3,0.3,0.4]
+    ctx_marg_theta = [0.7]*3
+    from itertools import product
+    cross_product = list(product([0,1], repeat=3))
+    for j in cross_product:
+        exp_util = np.prod(np.asarray([nt if o==1 else (1-nt) for nt,o in zip(ctx_marg_theta,list(j))]))
+        jtheta = np.sum(j)/3
+        exp_util2 = np.sum(np.asarray([nt*o + (1-nt)*(1-o) for nt,o in zip(ctx_marg_theta,[jtheta]*3)]))/3
+        print(j,exp_util,exp_util2, jtheta)
+    '''

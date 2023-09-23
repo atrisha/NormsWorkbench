@@ -30,6 +30,7 @@ from scipy.stats import beta, norm
 import seaborn as sns
 import pandas as pd
 import torch
+import math
 
 
 
@@ -80,10 +81,11 @@ class parallel_env(ParallelEnv):
         These attributes should not be changed after initialization.
         """
         self.num_players = 100
-        self.update_rate = 10
+        self.update_rate = 5
         #self.norm_context_list = ['n1','n2','n3','n4']
         self.norm_context_list = ['n1']
         self.security_util = 0.2
+        self.sanc_marginal_target = 0.25
         sanctioning_vals = np.random.normal(0.5, 0.1, self.num_players)
         sanctioning_vals = np.clip(sanctioning_vals, 0, 1)
         self.possible_agents = [Player(r) for r in range(self.num_players)]
@@ -117,11 +119,11 @@ class parallel_env(ParallelEnv):
         #distr_params = {'mean_op_degree':self.true_state['n1']}
         #ops = self.generate_opinions('uniform',distr_params)
         
-        #distr_params = {'mean_op_degree':self.true_state['n1'],'SD':0.2}
-        #ops = self.generate_opinions('gaussian',distr_params)
+        distr_params = {'mean_op_degree':self.true_state['n1'],'SD':0.2}
+        ops = self.generate_opinions('gaussian',distr_params)
         
-        distr_params = {'mean_op_degree_apr':0.7,'mean_op_degree_disapr':0.4,'apr_weight':0.3,'SD':0.05}
-        ops = self.generate_opinions('U',distr_params)
+        #distr_params = {'mean_op_degree_apr':0.7,'mean_op_degree_disapr':0.4,'apr_weight':0.3,'SD':0.05}
+        #ops = self.generate_opinions('U',distr_params)
         
         '''
         opinions = np.random.choice([1,0],size=self.num_players,p=[norm_context_appr_rate['n1'], 1-norm_context_appr_rate['n1']])
@@ -132,11 +134,16 @@ class parallel_env(ParallelEnv):
             ops = opinions[:,n_idx]
             for idx,op in enumerate(ops): 
                 self.possible_agents[idx].opinion[norm_context] = np.random.uniform(0.5,1) if op == 1 else np.random.uniform(0,0.5)
+        
+        fig, ax = plt.subplots()
+        ax = sns.histplot(ops, kde=True, bins=20, color='blue', label='Bimodal Distribution', stat='density')
+        
+        plt.show()
         '''
         for idx,op in enumerate(ops): 
             self.possible_agents[idx].opinion['n1'] = op
         for idx,s in enumerate(sanctioning_vals):
-            self.possible_agents[idx].sanction_capacity = s
+            self.possible_agents[idx].sanction_intensity = s
         ''' Define the marginal approval means'''
         
         
@@ -233,6 +240,11 @@ class parallel_env(ParallelEnv):
             num_disappr = len([ag.action[0] for ag in self.agents if ag.action[0]==0 and ag.action[0]!=-1])
             
             if num_observation > 0:
+                theta_prime_rate = self.common_posterior
+                a_prime = theta_prime_rate*self.update_rate
+                b_prime =  self.update_rate-a_prime
+                self.common_prior = (self.common_prior[0]+a_prime, self.common_prior[1]+b_prime)
+                
                 theta_prime_rate = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1])
                 a_prime = theta_prime_rate*self.update_rate
                 b_prime =  self.update_rate-a_prime
@@ -248,9 +260,14 @@ class parallel_env(ParallelEnv):
             if not self.stewarding_flag:
                 rewards = (num_participation-0.5)*2
             else:
-                curr_bels = self.common_prior[0]/np.sum(self.common_prior)
-                target_op = self.target_op
-                rewards = (target_op-curr_bels)**2
+                #curr_bels = self.common_prior[0]/np.sum(self.common_prior)
+                #target_op = self.target_op
+                #rewards = (target_op-curr_bels)**2
+                
+                mean_appr_degree = np.mean([ag.opinion[ag.norm_context] for ag in self.agents if ag.action[0]!=-1 and ag.opinion[ag.norm_context]>0.5])
+                mean_sanctioning_capacity = np.mean([ag.action[3] for ag in self.agents if ag.action[0]!=-1])
+                mean_appr_degree = 0 if math.isnan(mean_appr_degree) else mean_appr_degree
+                rewards = mean_appr_degree 
             
             observations = self.common_prior
             # typically there won't be any information in the infos, but there must
@@ -436,7 +453,16 @@ class Player():
         if not baseline:
             theta = env.common_posterior
             n_p = env.common_proportion_posterior
-            util = lambda op : op*(self.sanction_capacity**(1-theta))*n_p if op >= 0.5 else (1-op)*(self.sanction_capacity**theta)*(1-n_p)
+            op_degree = op if op >= 0.5 else (1-op)
+            conc_prop = n_p if op >= 0.5 else (1-n_p)
+            conc_deg = theta if op >= 0.5 else (1-theta)
+            if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
+                opt_sanc = 1
+            else:
+                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
+            self.sanction_intensity = opt_sanc
+            
+            util = lambda op : op*(self.sanction_intensity**(1-theta))*n_p if op >= 0.5 else (1-op)*(self.sanction_intensity**theta)*(1-n_p)
         
             ''' The Bayesian Nash Eq action thresholds. '''
             if util(op) < u_bar:
@@ -447,11 +473,20 @@ class Player():
                 self.action_util = util(op)
                     
             
-            self.action =(self.action_code,self.action_util,self.opinion[self.norm_context])
+            self.action =(self.action_code,self.action_util,self.opinion[self.norm_context],self.sanction_intensity)
         else:
             theta_baseline = env.prior_baseline[0]/sum(env.prior_baseline)
             prop_baseline = env.prior_prop_baseline[0]/sum(env.prior_prop_baseline)
-            util_baseline = lambda op : op*(self.sanction_capacity**(1-theta_baseline))*prop_baseline if op >= 0.5 else (1-op)*(self.sanction_capacity**theta_baseline)*(1-prop_baseline)
+            op_degree = op if op >= 0.5 else (1-op)
+            conc_prop = prop_baseline if op >= 0.5 else (1-prop_baseline)
+            conc_deg = theta_baseline if op >= 0.5 else (1-theta_baseline)
+            if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
+                opt_sanc = 1
+            else:
+                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
+            self.sanction_intensity = opt_sanc
+            
+            util_baseline = lambda op : op*(self.sanction_intensity**(1-theta_baseline))*prop_baseline if op >= 0.5 else (1-op)*(self.sanction_intensity**theta_baseline)*(1-prop_baseline)
             
             if util_baseline(op) < u_bar:
                 self.action_code_baseline = -1
@@ -460,7 +495,7 @@ class Player():
                 self.action_code_baseline = 1 if op >= 0.5 else 0
                 self.action_util_baseline = util_baseline(op)
             
-            self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context])
+            self.action =(self.action_code_baseline,self.action_util_baseline,self.opinion[self.norm_context],self.sanction_intensity)
         
         return self.action
     
@@ -582,7 +617,7 @@ def run_sim(run_param):
 
 if __name__ == "__main__":
     df_list = dict()#(3,1.3),(5,2),(2,3.3)
-    for runlist in [(4,2),(3,1.3),(5,2),(2,3.3)]:
+    for runlist in [(4,2)]:
         run_param ={'common_prior':runlist,'common_proportion_prior':runlist,'normal_constr_w':0.3,
                     'opt_signals':{0.1:0.1, 0.2:0.5, 0.3:0.5, 0.4:0.5, 0.5:0.5, 0.6:0.5, 0.7:0.5, 0.8:0.5, 0.9:0.6}}
         

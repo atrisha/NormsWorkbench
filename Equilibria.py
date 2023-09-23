@@ -117,7 +117,7 @@ class PureNashEquilibria():
                 return eq_dict
         else:
             return eq_dict
-
+'''
 payoff_dict = {('s','s'):[2,2],
                ('s','h'):[-1,0],
                ('h','s'):[0,-1],
@@ -127,4 +127,4 @@ agent_ids = [1,2]
 ce = CorrelatedEquilibria()
 res = ce.solve(payoff_dict, agent_ids)
 print(res)     
-        
+  '''      
