@@ -84,7 +84,7 @@ class parallel_env(ParallelEnv):
         self.update_rate = 5
         #self.norm_context_list = ['n1','n2','n3','n4']
         self.norm_context_list = ['n1']
-        self.security_util = 0.2
+        self.security_util = 0.15
         self.sanc_marginal_target = 0.25
         sanctioning_vals = np.random.normal(0.5, 0.1, self.num_players)
         sanctioning_vals = np.clip(sanctioning_vals, 0, 1)
@@ -116,11 +116,11 @@ class parallel_env(ParallelEnv):
         players_private_contexts  = self.players_private_contexts
         for idx,op in enumerate(players_private_contexts): self.possible_agents[idx].norm_context = players_private_contexts[idx]
         
-        #distr_params = {'mean_op_degree':self.true_state['n1']}
-        #ops = self.generate_opinions('uniform',distr_params)
+        distr_params = {'mean_op_degree':self.true_state['n1']}
+        ops = self.generate_opinions('uniform',distr_params)
         
-        distr_params = {'mean_op_degree':self.true_state['n1'],'SD':0.2}
-        ops = self.generate_opinions('gaussian',distr_params)
+        #distr_params = {'mean_op_degree':self.true_state['n1'],'SD':0.2}
+        #ops = self.generate_opinions('gaussian',distr_params)
         
         #distr_params = {'mean_op_degree_apr':0.7,'mean_op_degree_disapr':0.4,'apr_weight':0.3,'SD':0.05}
         #ops = self.generate_opinions('U',distr_params)
@@ -456,16 +456,20 @@ class Player():
             op_degree = op if op >= 0.5 else (1-op)
             conc_prop = n_p if op >= 0.5 else (1-n_p)
             conc_deg = theta if op >= 0.5 else (1-theta)
+            '''
             if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
                 opt_sanc = 1
             else:
                 opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
             self.sanction_intensity = opt_sanc
+            '''
+            self.sanction_intensity = min(math.pow(2*op_degree-2*conc_deg*op_degree,1/conc_deg),1)
             
-            util = lambda op : op*(self.sanction_intensity**(1-theta))*n_p if op >= 0.5 else (1-op)*(self.sanction_intensity**theta)*(1-n_p)
-        
+            #util = lambda op : op*(self.sanction_intensity**(1-theta))*n_p if op >= 0.5 else (1-op)*(self.sanction_intensity**theta)*(1-n_p)
+            util = lambda op : (op*(self.sanction_intensity**(1-theta)) - (0.5*self.sanction_intensity) )*n_p if op >= 0.5 else ((1-op)*(self.sanction_intensity**theta) - (0.5*self.sanction_intensity) )*(1-n_p)
+            util_val = util(op)
             ''' The Bayesian Nash Eq action thresholds. '''
-            if util(op) < u_bar:
+            if  util_val < u_bar:
                 self.action_code = -1
                 self.action_util = u_bar
             else:
@@ -480,15 +484,18 @@ class Player():
             op_degree = op if op >= 0.5 else (1-op)
             conc_prop = prop_baseline if op >= 0.5 else (1-prop_baseline)
             conc_deg = theta_baseline if op >= 0.5 else (1-theta_baseline)
+            '''
             if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
                 opt_sanc = 1
             else:
                 opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
             self.sanction_intensity = opt_sanc
-            
-            util_baseline = lambda op : op*(self.sanction_intensity**(1-theta_baseline))*prop_baseline if op >= 0.5 else (1-op)*(self.sanction_intensity**theta_baseline)*(1-prop_baseline)
-            
-            if util_baseline(op) < u_bar:
+            '''
+            self.sanction_intensity = min(math.pow(2*op_degree-2*conc_deg*op_degree,1/conc_deg),1)
+            #util_baseline = lambda op : op*(self.sanction_intensity**(1-theta_baseline))*prop_baseline if op >= 0.5 else (1-op)*(self.sanction_intensity**theta_baseline)*(1-prop_baseline)
+            util_baseline = lambda op : (op*(self.sanction_intensity**(1-theta_baseline)) - (0.5*self.sanction_intensity) )*prop_baseline if op >= 0.5 else ((1-op)*(self.sanction_intensity**theta_baseline) - (0.5*self.sanction_intensity) )*(1-prop_baseline)
+            util_val = util_baseline(op)
+            if util_val < u_bar:
                 self.action_code_baseline = -1
                 self.action_util_baseline = u_bar
             else:

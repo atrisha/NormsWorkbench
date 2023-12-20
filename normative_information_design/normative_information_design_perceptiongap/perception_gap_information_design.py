@@ -93,7 +93,7 @@ class parallel_env(ParallelEnv):
         self.sanc_marginal_target = 0.2
         #self.norm_context_list = ['n1','n2','n3','n4']
         self.norm_context_list = ['n1']
-        self.security_util = 0.2
+        self.security_util = 0.1
         sanctioning_vals = np.random.normal(0.5, 0.1, self.num_players)
         self.mean_sanction, self.mean_sanction_baseline = 0.5,0.5
         sanctioning_vals = np.clip(sanctioning_vals, 0, 1)
@@ -305,10 +305,10 @@ class parallel_env(ParallelEnv):
             
             observations = self.common_prior
             if self.only_intensive:
-                x = [(ag.opinion[ag.norm_context],ag.listened_to,ag.action[0],ag.action[5],ag.action[6]) for ag in self.agents if ag.opinion[ag.norm_context]>=0.5]
+                x = [(ag.opinion[ag.norm_context],ag.listened_to,ag.action[0],ag.action[5],ag.action[6]) for ag in self.agents if ag.opinion[ag.norm_context] >=0.5]
                 x.sort(key=lambda x: x[0])
             else:
-                x = [(ag.opinion[ag.norm_context],ag.listened_to,ag.action[0],ag.action[5],ag.action[6]) for ag in self.agents if ag.opinion[ag.norm_context]>=0.5]
+                x = [(ag.opinion[ag.norm_context],ag.listened_to,ag.action[0],ag.action[5],ag.action[6]) for ag in self.agents if ag.opinion[ag.norm_context] >=0.5]
                 x.sort(key=lambda x: x[0])
             # typically there won't be any information in the infos, but there must
             # still be an entry for each agent
@@ -375,6 +375,7 @@ class Player():
              
             self.common_prior_outgroup = (sample,5-sample)
             self.common_prior_ingroup = (self.common_prior_outgroup[1],self.common_prior_outgroup[0])
+        self.common_prior_outgroup_init = self.common_prior_outgroup[0]/np.sum(self.common_prior_outgroup)
         self.common_posterior = env.common_prior
         self.common_posterior_ingroup = env.common_prior_ingroup
         self.common_posterior_outgroup = env.common_prior_outgroup
@@ -398,6 +399,7 @@ class Player():
             f=1
         
         if not baseline:
+            self.sanction_capacity = None
             theta = self.common_posterior
             theta_ingroup = self.common_posterior_ingroup
             theta_outgroup = self.common_posterior_outgroup
@@ -407,36 +409,42 @@ class Player():
             conc_prop = n_p if op >= 0.5 else (1-n_p)
             
             conc_deg = theta if op >= 0.5 else (1-theta)
-            if op_degree*conc_prop*(1-conc_deg)*1**(-conc_deg) > env.sanc_marginal_target:
-                opt_sanc = 1
-                opt_sanc_o = 1
-            else:
-                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg)),-1/conc_deg)
-                opt_sanc_o = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(conc_deg)),-1/(1-conc_deg))
-            self.sanction_intensity = min(self.sanction_capacity,opt_sanc)
-            self.sanction_intensity_o = min(self.sanction_capacity,opt_sanc_o)
             
+            ext_theta_ingroup = theta
+            ext_theta_outgroup = (1-theta)
+            
+                       
             conc_deg_ingroup = theta_ingroup if op >= 0.5 else (1-theta_ingroup)
-            if op_degree*conc_prop*(1-conc_deg_ingroup)*1**(-conc_deg_ingroup) > env.sanc_marginal_target:
-                opt_sanc = 1
-            else:
-                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg_ingroup)),-1/conc_deg_ingroup)
-            self.sanction_intensity_ingroup = min(self.sanction_capacity,opt_sanc)
-            
             conc_deg_outgroup = theta_outgroup if op >= 0.5 else (1-theta_outgroup)
-            if op_degree*conc_prop*(1-conc_deg_outgroup)*1**(-conc_deg_outgroup) > env.sanc_marginal_target:
-                opt_sanc = 1
-            else:
-                opt_sanc = math.pow(env.sanc_marginal_target/(op_degree*conc_prop*(1-conc_deg_outgroup)),-1/conc_deg_outgroup)
-            self.sanction_intensity_outgroup = min(self.sanction_capacity,opt_sanc)
+            
+            self.sanction_intensity = min(math.pow(2*op_degree-2*conc_deg*op_degree,1/conc_deg),1)
+            self.sanction_intensity_o = min(math.pow(2*op_degree-2*(1-conc_deg)*op_degree,1/(1-conc_deg)),1)
+            self.sanction_intensity_ingroup = min( math.pow(2*op_degree-2*conc_deg_ingroup*op_degree,1/conc_deg_ingroup) , 1)
+            self.sanction_intensity_outgroup = min( math.pow(2*op_degree-2*conc_deg_outgroup*op_degree,1/conc_deg_outgroup) , 1)
+            
             
             util = lambda op : op*(self.sanction_intensity**(1-theta))*n_p if op >= 0.5 else (1-op)*(self.sanction_intensity**theta)*(1-n_p)
             util_ingroup = lambda op : op*(self.sanction_intensity_ingroup**(1-theta_ingroup))*n_p if op >= 0.5 else (1-op)*(self.sanction_intensity_ingroup**theta_ingroup)*(1-n_p)
             util_outgroup = lambda op : op*(self.sanction_intensity_outgroup**(1-theta_outgroup))*n_p if op >= 0.5 else (1-op)*(self.sanction_intensity_outgroup**theta_outgroup)*(1-n_p)
             
-            util_val = util(op)
-            util_val_ingroup = util_ingroup(op)
-            util_val_outgroup = util_outgroup(op)
+            ext_util_outgroup = lambda op : (op*(self.sanction_intensity_o**(1-ext_theta_outgroup)) - (0.5*self.sanction_intensity_o) )*n_p if op >= 0.5 else ((1-op)*(self.sanction_intensity_o**ext_theta_outgroup) - (0.5*self.sanction_intensity_o) )*(1-n_p)
+            ext_util_ingroup = lambda op : (op*(self.sanction_intensity**(1-ext_theta_ingroup)) - (0.5*self.sanction_intensity) )*n_p if op >= 0.5 else ((1-op)*(self.sanction_intensity**ext_theta_ingroup) - (0.5*self.sanction_intensity) )*(1-n_p)
+            int_util_ingroup = lambda op : (op*(self.sanction_intensity_ingroup**(1-theta_ingroup)) - (0.5*self.sanction_intensity_ingroup) )*n_p if op >= 0.5 else ((1-op)*(self.sanction_intensity_ingroup**theta_ingroup) - (0.5*self.sanction_intensity_ingroup) )*(1-n_p)
+            int_util_outgroup = lambda op : (op*(self.sanction_intensity_outgroup**(1-theta_outgroup)) - (0.5*self.sanction_intensity_outgroup) )*n_p if op >= 0.5 else ((1-op)*(self.sanction_intensity_outgroup**theta_outgroup) - (0.5*self.sanction_intensity_outgroup) )*(1-n_p)
+            
+            util_val_ingroup = ext_util_ingroup(op)
+            util_val_outgroup = ext_util_outgroup(op)
+            util_val = (util_val_ingroup + util_val_outgroup)/2
+            util_val_ingroup = int_util_ingroup(op)
+            util_val_outgroup = int_util_outgroup(op)
+            util_val_int = (util_val_ingroup + util_val_outgroup)/2
+            int_ext_weights = scipy.special.softmax([util_val_int,util_val]) 
+            self.ext_int_diff = util_val_int - util_val
+            inst_weights_inten = min(self.ext_int_diff**0.1,0.5) if self.ext_int_diff>=0 else min(-self.ext_int_diff**0.1,0.5)
+            inst_weights = [inst_weights_inten,1-inst_weights_inten]
+            inst_weights1 = scipy.special.softmax([util_val_int/u_bar,util_val/u_bar]) 
+            #if op>=0.5:
+            #    print(op,'ext' if inst_weights[0]<0.5 else 'int')   
             
             if env.only_intensive:
                 if util_val_ingroup > u_bar or util_val_outgroup > u_bar:
@@ -450,8 +458,11 @@ class Player():
                     self.action_code = -1
                     self.action_util = u_bar
                     self.listened_to = 'intensive'
+                    self.common_posterior_outgroup = self.common_prior_outgroup[0]/np.sum(self.common_prior_outgroup)
                 self.action =(self.action_code,self.action_util,self.opinion[self.norm_context],self.sanction_intensity,self.listened_to,0,
                           self.common_posterior_outgroup)
+                if op >= 0.7 and self.common_posterior_outgroup > 0.4:
+                    f=1
             else:
                 if util_val_ingroup > u_bar and util_val_outgroup > u_bar and util_val > u_bar:
                     self.action_code = 1 if op >= 0.5 else 0
@@ -469,75 +480,14 @@ class Player():
                 else:
                     self.action_code = -1
                     self.action_util = u_bar
+                    self.listened_to = 'none'
                     if util_val > np.mean([util_val_ingroup,util_val_outgroup]):
-                        utilmax = util_val
-                        self.listened_to = 'extensive'
                         self.sanction_intensity = self.sanction_intensity
                     else:
-                        utilmax = np.mean([util_val_ingroup,util_val_outgroup])
-                        self.listened_to = 'intensive'
                         self.sanction_intensity = self.sanction_intensity_outgroup
                 
                 if self.listened_to == 'both':
-                    self.ext_int_diff =  (n_p*op_degree*(1-conc_deg_ingroup)*self.sanction_intensity_ingroup**(-conc_deg_ingroup)+ n_p*op_degree*(1-conc_deg_outgroup)*self.sanction_intensity_outgroup**(-conc_deg_outgroup))/2 - n_p*op_degree*(1-conc_deg)*self.sanction_intensity**(-conc_deg)
-                    #self.ext_int_diff = (util_val_ingroup+util_val_outgroup)/2 - util_val
-                    self.ext_int_diff1 = self.ext_int_diff
-                    self.ext_int_diff = self.ext_int_diff*10
-                    if self.ext_int_diff < 0:
-                        self.ext_int_diff = 1-abs(self.ext_int_diff)
-                    self.ext_int_diff = 0 if self.ext_int_diff < 0 else self.ext_int_diff
-                    int_ingr_sig_val = n_p*op_degree*self.sanction_intensity_ingroup**(1-conc_deg_ingroup)
-                    int_outgr_sig_val = n_p*op_degree*self.sanction_intensity_outgroup**(1-conc_deg_outgroup)
-                    ext_sig_val_ingr = n_p*op_degree*self.sanction_intensity**(1-conc_deg)
-                    ext_sig_val_outgr = n_p*op_degree*self.sanction_intensity_o**(conc_deg)
                     
-                    signal_values = [(n_p*op_degree*(1-conc_deg_ingroup)*self.sanction_intensity_ingroup**(-conc_deg_ingroup)+ n_p*op_degree*(1-conc_deg_outgroup)*self.sanction_intensity_outgroup**(-conc_deg_outgroup))/2,n_p*op_degree*(1-conc_deg)*self.sanction_intensity**(-conc_deg)]
-                    signal_values = [(int_ingr_sig_val+int_outgr_sig_val)/2,ext_sig_val_ingr]
-                    #inst_weights = scipy.special.softmax(signal_values)
-                    self.ext_int_diff1 = signal_values[0]-signal_values[1]
-                    inst_weights_inten = (5/((op_degree)*10))*(self.ext_int_diff1+(op_degree))
-                    inst_weights = [inst_weights_inten,1-inst_weights_inten]
-                    inst_weights_sm = scipy.special.softmax(signal_values)
-                    inst_weights = [s/np.sum(signal_values) for s in signal_values]
-                    f=1
-                    #inst_weights = scipy.special.softmax(signal_values)
-                    
-                    #inst_weights = [self.ext_int_diff,(1-self.ext_int_diff)]
-                    '''
-                    if self.listened_to == 'both':
-                        if self.opinion[self.norm_context] >=0.5:
-                            self.common_posterior_outgroup = (1-self.ext_int_diff)*(1-self.common_posterior) + self.ext_int_diff*self.common_posterior_outgroup #if self.listened_to == 'extensive' else np.mean([self.common_posterior,self.common_posterior_outgroup])
-                        else:
-                            self.common_posterior_outgroup = (1-self.ext_int_diff)*self.common_posterior + self.ext_int_diff*self.common_posterior_outgroup
-                    elif self.listened_to == 'extensive':
-                        self.post = self.common_posterior
-                        if self.opinion[self.norm_context] >=0.5:
-                            self.common_posterior_outgroup = (1-self.common_posterior)
-                        else:
-                            self.common_posterior_outgroup = self.common_posterior
-                    else:
-                        self.common_posterior_outgroup = self.common_posterior_outgroup
-                    
-                    '''
-                    '''
-                    if self.ext_int_diff < 0:
-                        print('Warning!!!!!!!!')
-                    if self.opinion[self.norm_context] >=0.5:
-                        if self.common_posterior >= 0.5:
-                            self.common_posterior_outgroup = (1-self.ext_int_diff)*(1-self.common_posterior) + self.ext_int_diff*self.common_posterior_outgroup
-                            
-                        else:
-                            self.common_posterior_outgroup = (1-self.ext_int_diff)*self.common_posterior + self.ext_int_diff*self.common_posterior_outgroup
-                    else:
-                        if self.common_posterior >= 0.5:
-                            self.common_posterior_outgroup = (1-self.ext_int_diff)*self.common_posterior + self.ext_int_diff*self.common_posterior_outgroup
-                        else:
-                            self.common_posterior_outgroup = (1-self.ext_int_diff)*(1-self.common_posterior) + self.ext_int_diff*self.common_posterior_outgroup
-                       
-                    f=1
-                    '''
-                    
-                    #print(_diff,inst_weights[0])
                     if self.opinion[self.norm_context] >=0.5:
                         if self.common_posterior >= 0.5:
                             self.common_posterior_outgroup = inst_weights[1]*(1-self.common_posterior) + inst_weights[0]*self.common_posterior_outgroup
@@ -551,20 +501,7 @@ class Player():
                             self.common_posterior_outgroup = inst_weights[1]*(1-self.common_posterior) + inst_weights[0]*self.common_posterior_outgroup                    
                     
                     #self.ext_int_diff = [self.sanction_intensity, self.sanction_intensity_ingroup ,self.sanction_intensity_outgroup]
-                    ''' The Bayesian Nash Eq action thresholds. '''
-                    '''
-                    if utilmax < u_bar:
-                        self.action_code = -1
-                        self.action_util = u_bar
-                    else:
-                        self.action_code = 1 if op >= 0.5 else 0
-                        self.action_util = utilmax
-                    '''
                     
-                    ''' Now the sanctioning selection '''
-                    ''' Sanction is selected based on the marginal utility as calculated by taking the derivative of the utility o_{i}*s^{1-o_-i}*n or (1-o_i)s^{o_-i}*(1-n) as applicable '''
-                    ''' The derivative of the above function is o_{i}*n*(1-o_-i)s^{-o_-i} or (1-o_{i})*(1-n)*(o_-i)s^{o_-i-1} as applicable '''
-                    ''' If the marginal utility threshold is s_max_i  '''
                 else:
                     if self.listened_to == 'intensive':
                         self.common_posterior_outgroup = self.common_posterior_outgroup
@@ -753,8 +690,9 @@ def run_sim(run_param):
             mean_common_prior_ingroup_var = np.mean([utils.beta_var(agent.common_prior_ingroup[0],agent.common_prior_ingroup[1]) for agent in env.possible_agents])
             mean_common_prior_outgroup_var = np.mean([utils.beta_var(agent.common_prior_outgroup[0],agent.common_prior_outgroup[1]) for agent in env.possible_agents])
             
-            if min(mean_common_prior_var,mean_common_prior_ingroup_var,mean_common_prior_outgroup_var) < 0.005:
+            if min(mean_common_prior_var,mean_common_prior_ingroup_var,mean_common_prior_outgroup_var) < 0.001:
                 break
+            #print(min(mean_common_prior_var,mean_common_prior_ingroup_var,mean_common_prior_outgroup_var))
             
             print(common_prior,batch_num,i)
             #curr_state = np.mean([agent.common_prior[0]/sum(agent.common_prior) for agent in env.possible_agents])
@@ -803,6 +741,11 @@ def run_sim(run_param):
             
             #actions = {agent.id:agent.act(env,run_type='self-ref',baseline=True) for agent in env.possible_agents}
             #env.step(actions,i,baseline=True)
+        '''
+        plt.figure()
+        plt.plot([ag.common_prior_outgroup_init for ag in env.possible_agents if ag.opinion[ag.norm_context]>=0.5],[ag.common_posterior_outgroup for ag in env.possible_agents if ag.opinion[ag.norm_context]>=0.5],'.')
+        plt.show()
+        '''
         data = {'run_id':[batch_num]*len(history[0]), 'time_step':[1]*len(history[0]), 
                 'listened': [d[1] for d in history[0]],
                 'opinion': [d[0] for d in history[0]], 'out_belief': [d[4] for d in history[0]] }
@@ -868,19 +811,19 @@ if __name__ == "__main__":
                     #'opt_signals_ingroup':{0.5:0.5, 0.6:0.5, 0.7:0.5, 0.8:0.6, 0.9:0.7,1:0.7},
                     'opt_signals_ingroup':{0.5:0.3, 0.6:0.3, 0.7:0.5, 0.8:0.6, 0.9:0.6,1:0.7},
                     'opt_signals_outgroup':{0:0.1,0.1:0.1, 0.2:0.1, 0.3:0.1, 0.4:0.1, 0.5:0.2},
-                    'only_intensive':False}
+                    'only_intensive':True}
         
         run_df = run_sim(run_param)
         df_list[str(runlist)] = run_df
     print(tabulate(run_df, headers='keys', tablefmt='psql'))
     if run_param['only_intensive']:
-        run_df.to_csv('data\\lst_data_intensive_const_sanc.csv', index=True)
+        run_df.to_csv('data\\lst_data_intensive_const_sanc_all.csv', index=True)
     else:
-        run_df.to_csv('data\\lst_data_const_sanc.csv', index=True)
-    '''
+        run_df.to_csv('data\\lst_data_const_sanc_all.csv', index=True)
     
-    run_df = pd.read_csv('data\\lst_data_intensive.csv', header=0).applymap(lambda x: x.strip() if isinstance(x, str) else x)
-    run_df_both = pd.read_csv('data\\lst_data.csv', header=0).applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    '''
+    run_df = pd.read_csv('data\\lst_data_intensive_const_sanc.csv', header=0).applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    run_df_both = pd.read_csv('data\\lst_data_const_sanc.csv', header=0).applymap(lambda x: x.strip() if isinstance(x, str) else x)
     run_df.columns = [col.strip() for col in run_df.columns]
     run_df_both.columns = [col.strip() for col in run_df_both.columns]
     run_df_both.loc[run_df_both['time_step'] > 1, 'time_step'] = 'Final_Both'
@@ -890,14 +833,51 @@ if __name__ == "__main__":
     run_df.loc[run_df['time_step'] > 1, 'time_step'] = 'Final_intensive'
     run_df.loc[run_df['time_step'] == 1, 'time_step'] = 'Initial'
     run_df = run_df.append(run_df_both)
+    
+    def _assign_class(op):
+        if 0.5 <= op < 0.625:
+            return '[0.5-0.625]'
+        if 0.625 <= op < 0.75:
+            return '[0.625-0.75]'
+        if 0.75 <= op <= 1:
+            return '[0.75-1]'
+        else:
+            return '[0.875-1]'
+    if 'opinion_class' not in run_df.columns:
+        run_df['opinion_class'] = run_df['opinion'].apply(_assign_class)
+    subset_df = run_df[run_df['time_step'].isin(['Final_intensive', 'Final_Both'])]
+    print(tabulate(subset_df, headers='keys', tablefmt='psql'))
     sns.set_theme(style="darkgrid")
-    g = sns.lmplot(x="opinion", y="out_belief", data=run_df, ci=95, hue='time_step',scatter=False)  
     
     
-    ax = sns.scatterplot(data=run_df, x='opinion', y='out_belief', hue='time_step',legend=False)
+    means = subset_df.groupby(['opinion_class', 'time_step'], as_index=False)['out_belief'].median()
+    mean = means.sort_values(by='time_step',ascending=False)
+    
+    
+    
+    ax = sns.boxplot(x='opinion_class', y='out_belief', hue='time_step', data=subset_df)
+    
+    # or if you prefer medians:
+    # means = df.groupby(['Factor', 'Hue'], as_index=False)['Value'].median()
+    # Get unique factor levels and hue levels
+    factor_levels = np.unique(subset_df['opinion_class'])
+    hue_levels = np.unique(subset_df['time_step'])
+    palette = sns.color_palette(['black'], 2)
+    sns.lineplot(data=means, x='opinion_class', y='out_belief', hue='time_step', marker='o', ax=ax, legend=False, palette=palette, linewidth = 0.75, linestyle='--')
+    
+    # Plot a regression line for each hue level
+    #for hue in hue_levels:
+    #    subset_means = means[means['time_step'] == hue]
+    #    sns.regplot(x=np.arange(len(factor_levels)), y='out_belief', data=subset_means, scatter=False, ci=None)
+
+
+    #g = sns.lmplot(x="opinion", y="out_belief", data=run_df, ci=95, hue='time_step',scatter=False)  
+    
+    
+    #ax = sns.scatterplot(data=run_df, x='opinion', y='out_belief', hue='time_step',legend=False)
     ax.set_xlabel('Opinion (approval)')
-    ax.set_ylabel('Second order beliefs (beliefs about out-group)')
-    
+    ax.set_ylabel('Beliefs about out-group')
+    '''
     df = {'x':[0.5,0.85],'y':[0.4,0.4]}
     sns.lineplot(data=df, x='x', y='y', linestyle='dashed', markers=True, dashes=(2, 2), label='Dashed Line', color='black',legend=False)
     groups = run_df['time_step'].unique()
@@ -911,6 +891,5 @@ if __name__ == "__main__":
     #r, p = pearsonr(subset_data['opinion'], subset_data['out_belief'])
     #ax = plt.gca()
     #ax.text(.05, .8, 'r={:.2f}, p={:.2g}'.format(r, p),transform=ax.transAxes)
+    '''
     plt.show()
-    
-    
