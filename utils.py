@@ -509,6 +509,13 @@ def beta_pdf(x,a,b):
 def beta_var(a,b):
     return (a*b) / ( ((a+b)**2) * (a+b+1) )
 
+def distributionalize(priors,posterior_float):
+    if isinstance(posterior_float, float):
+        _var = beta_var(priors[0], priors[1])
+        return est_beta_from_mu_sigma(posterior_float, math.sqrt(_var))
+    else:
+        return posterior_float
+
 def dirichlet_pdf(x, alpha):
     
     return dirichlet.pdf(x, alpha)
